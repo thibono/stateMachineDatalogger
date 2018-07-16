@@ -45,7 +45,7 @@ ModemStatusResponse msr = ModemStatusResponse();
 
 int statusLed = 13;
 int errorLed = 13;
-int dataLed = 13;
+int dataLed = 13;                                     
 
 /* I am using the am2315 temperature and relative hum. sensor.
   This sensor has a digital interface (I2C).
@@ -180,26 +180,48 @@ int ledState = 0;
 
 unsigned long timer;
 
+struct Intervals {
+  int logging;
+  int checkSystem;
+  int readGPS;
+  int midnightReset;
+};
 
+ 
 struct flags {
   char logging;
+  char lowBattery;
+  char highInternalTemperature;
 };
 
 struct requests {
   char sensor;
   char gps;
+  char systemSensors;
+  char externalSensors;
+
 };
 
 struct datalogCMD {
   char start;
   char pause;
-  int loggingInterval;
+  //int loggingInterval;
+  struct Intervals interval;
   struct flags flag;
   struct requests request;
 };
 
 struct datalogCMD dataLogCMD;
 
+/*
+ * usage example:
+ * 
+ * dataLogCMD.flag.lowBattery;
+ * dataLogCMD.flag.highInternalTemperature;
+ * 
+ * dataLogCMD.request.systemSensors; // read system sensors
+ */
+ 
 /*
   States of the datalogger.
   states are mainly the smallest steps composed by functions the datalogger have to execute.
@@ -211,7 +233,8 @@ enum state {
   logging,
   transmitting,
   receiving,
-  gpsReading
+  gpsReading,
+  systemCheck
 };
 
 enum state currentState = 0;
@@ -238,6 +261,27 @@ struct sensorLogFields sensorLogData;
 String sensorLog;
 
 
+
+/* System sensors log data
+  Global id, timeStamp, stationID, internalTemperature (C_deg), BatteryVoltage (V), SolarPanVoltage (V), [current]
+  
+  example:
+  5,5/23/2018, 13:34, 50,5,14, 
+
+  
+*/
+struct systemSensorLogFields {
+  long int globalID;
+  char timeStamp[10];
+  char stationID[10];
+  float internalTemperature;
+  float BatteryVoltage;
+  float SolarPanVoltage;
+  float Current;
+};
+
+struct systemSensorLogFields systemSensorData;
+String systemSensorString;
 
 
 /*GPS CODE
@@ -295,6 +339,7 @@ void setup() {
   SDCardInit();
   SD_createFile("datalog.txt");
   SD_createFile("info.txt");
+  SD_createFile("status.txt");
   SD_createFile("gps.txt");
   datalog_printHeader();
   RTCInit();
@@ -311,10 +356,13 @@ void setup() {
   pinMode(state6Led, OUTPUT);
   pinMode(state7Led, OUTPUT);
 
-  dataLogCMD.loggingInterval = 5;
+  dataLogCMD.interval.logging = 5;
+  dataLogCMD.interval.checkSystem = 10;  
+  dataLogCMD.interval.readGPS = 12;  // in hours. Read GPS at 12PM 
+
   sensorLogData.globalID = 0; // reset the global identifier for the sensor data. (have to find a better way to keep the sample id - maybe using the eeprom -
 
-  //   dataLogCMD.flag.logging = 0;
+     dataLogCMD.flag.logging = 1;
 
   // put your setup code here, to run once:
 
@@ -324,7 +372,7 @@ void loop() {
 
   // do something different depending on the range value:
   switch (currentState) {
-    case idle:    // 
+    case idle:     // 
 
       //check if data loger is enabled, if it is, go to sampling, otherwise stays in idle
       // if the datalogger is working, the green led blinks, otherwise is solid
@@ -334,98 +382,186 @@ void loop() {
         if the rtc is working, it reads the date and time
         if the rtc is not working, it reads the internal calendar system.
       */
+      // Create a local variable to store milliseconds from timer. This variable name is current milliseconds. 
       unsigned long currentMillis;
+      
+      // Read timer & store the value in current milliseconds.
       currentMillis = millis();
+      
+      // Compare current milliseconds with a global variable named previous milliseconds.
+      // If the interval is greater than the global variable named interval (1000 milliseconds or 1 second), then:
       if (currentMillis - previousMillis >= interval) {
-        // save the last time you executed your task
+        // Save the value of current milisecond into previous millisecond.
         previousMillis = currentMillis;
+        
+        // If data logger is on (means if the flag datalogCMD logging is set) then 
+        // is the logger mode on?
+        if (dataLogCMD.flag.logging) {
+            // yes the logger mode is on, print something: 
+         
+            
+            // Toggle an  led to visually indicate the system is logging data. The other leds are kept off.
+
+            // Print year, month, day, hours, minutes, and seconds in the terminal serial.
+            printRTC('a'); // prints hh:mm:ss
+            
+            //  Print a message on the terminal serial: “logger ON”
+            Serial.println("Idle - Logger On");
+            
+            
+            digitalWrite(state1Led, !digitalRead(state1Led)); // toogle led status
+            digitalWrite(state2Led, LOW);  // sampling led
+            digitalWrite(state3Led, LOW);  // processing led
+            digitalWrite(state4Led, LOW);  // logging data
+            digitalWrite(state5Led, LOW);  // transmitting led
+            digitalWrite(state6Led, LOW);  // receiving data
+            digitalWrite(state7Led, LOW);  // GPS
+        }
+        else{ // (If the system is not logging data) 
+            //Print a message on the serial terminal letting the user know the logger is off.
+            Serial.println("Idle - Logger Off");
+             
+            //  Turn on an visual indicator led. 
+            //Keeping this specific led solid means the system is not logging data. The other leds are kept off.
+            digitalWrite(state1Led, HIGH); // turn the LED on (HIGH is the voltage level)
+            digitalWrite(state2Led, LOW);  // sampling led
+            digitalWrite(state3Led, LOW);  // processing led
+            digitalWrite(state4Led, LOW);  // logging data
+            digitalWrite(state5Led, LOW);  // transmitting led
+            digitalWrite(state6Led, LOW);  // receiving data
+            digitalWrite(state7Led, LOW);  // GPS
+            
+        }
+
+        //  Create a local variable type “date” called “now”.
+        //  Read the real time calendar (RTC) module.
+        //  Store the data from RTC in the variable now. 
         DateTime now = rtc.now();
+       
+        //Store minutes from the rtc variable in the global variable current minute.
         currentMin = now.minute();
 
-        printRTC('a'); // prints hh:mm:ss
-
-        //if the rtc is not running, we have to mannually update the time
+        // If the RTC module is not running, then we the time is updated manually:
         if (!rtc.isrunning()) {
+          //Print hours, minutes, seconds. 
           printRTC('t'); // prints hh:mm:ss
+          // Increment global variable seconds.
           seconds++;
+           // If global variable seconds is equal to 60 seconds:
           if (seconds == 60) {
+            // Reset global variable seconds.
             seconds = 0;
+            // Increment the  global variable minutes.
             currentMin++;
+            // If global variable minutes is equal to 60 minutes:
             if (currentMin == 60) {
+              // Reset global variable minutes .
               currentMin = 0;
+              //Increment the  global variable hours.
               currentHour++;
+              //If global variable hours is equal to 24 hours:
               if (currentHour == 24) {
+                // Reset global variable hours.
                 currentHour = 0;
-                //here adds day, months and years
+               // No day, months and years was implemented yet.
+            
               }
             }
           }
         }
       }
 
-      /*checks the datalogger logging flag.
-        if the flag is 1, then the system is logging data
-        if is zero, the datalogger is waiting in standby
-
-      */
-      if (dataLogCMD.flag.logging) {
-        Serial.println("Idle - Logger On");
-        /*we need to execute things @1min, for example
-          read sensors, calculate stuff... so, we need to
-          check if previous minute is  different from current minute
-          if that is true, that means, we are in a "new" minute, therefore
-          we have to execute the minute related tasks*/
+    
+        //If the global variable current minute is different from global variable
+        //previous minute. 
+        //This avoids multiple readings during the same minute, however it
+        //limits the minimum sample time to one minute. 
+        // is it a new minute?
         if (previousMin != currentMin) {
+          // yes, it is a new minute. 
+          // Global variable previous minute is updated with the value of current minute.
+          previousMin = currentMin; 
 
-          previousMin = currentMin; // updates a new minute;
-          nextState = sampling; // updates the state of the datalogger
-          currentState = nextState; // goes to the next state.
+             // If data logger is on (means if the flag datalogCMD logging is set) then 
+             // is the logger mode on?
+             if (dataLogCMD.flag.logging) {
+                // yes the logger mode is on, print something: 
+                 // okay, the logger is on, but is it sample time right now?
+                if(currentMin % dataLogCMD.interval.logging){
+                    dataLogCMD.request.externalSensors = 1; 
+                
+                    // Update the state of the state machine from Idle to Sample sensors. 
+                    nextState = sampling; // updates the state of the datalogger
+                    currentState = nextState; // goes to the next state.
+                }
+              } 
+              
+
+             // the logging mode does not need to be on for the system check routine to be executed.
+              if(currentMin % dataLogCMD.interval.checkSystem){
+                    dataLogCMD.request.systemSensors = 1; 
+                    // Update the state of the state machine from Idle to Sample sensors. 
+                    nextState = sampling; // updates the state of the datalogger
+                    currentState = nextState; // goes to the next state.
+                }
+
+            
+            // we have to check for a "new" hour, this avoids over reading 
+            if (previousHour != currentHour) {
+              // yes, it is a new hour. 
+              
+              // Global variable previous Hour is updated with the value of current minute.
+              previousHour = currentHour; 
+              
+              // now, it is time to check if it is time to read the GPS coordinate.  
+              // this is done just once a day.              
+              if(currentHour % dataLogCMD.interval.readGPS){
+                   // set the global flag/request
+                   dataLogCMD.request.gps = 1; 
+                   
+                   // upgrade the state
+                   nextState = gpsReading;
+                   currentState = nextState;
+              }
+              if(currentHour % dataLogCMD.interval.midnightReset){
+                   // set the global flag/request
+                   
+              }
+            }
+ 
         }
-        // blinks the led to indicate the datalogger is working
 
-        digitalWrite(state1Led, !digitalRead(state1Led)); // toogle led status
-        digitalWrite(state2Led, LOW);  // sampling led
-        digitalWrite(state3Led, LOW);  // processing led
-        digitalWrite(state4Led, LOW);  // logging data
-        digitalWrite(state5Led, LOW);  // transmitting led
-        digitalWrite(state6Led, LOW);  // receiving data
-        digitalWrite(state7Led, LOW);  // GPS
-      } else {
 
-        Serial.println("Idle - Logger Off");
 
-        nextState = idle;
-        currentState = nextState;
-
-        // turns only the idle led (green pin 2) on.
-        digitalWrite(state1Led, HIGH); // turn the LED on (HIGH is the voltage level)
-        digitalWrite(state2Led, LOW);  // sampling led
-        digitalWrite(state3Led, LOW);  // processing led
-        digitalWrite(state4Led, LOW);  // logging data
-        digitalWrite(state5Led, LOW);  // transmitting led
-        digitalWrite(state6Led, LOW);  // receiving data
-        digitalWrite(state7Led, LOW);  // GPS
-
-      }
-
-      /*LOCAL COMMANDS FOR THE STATE MACHINE*/
+      //Idle serial port 
       // read serial port, check for commands
+      //Check if there is data arriving through the serial port. 
+      //If there is data, then: 
+
       if (Serial.available() > 0) {
+        // Create a local variable type byte called inByte. 
+        // Read a byte from the serial port.
+        // Save byte in the inByte.
         int inByte = Serial.read();
 
+        //If inByte is equal to one of the following options, then:
         switch (inByte) {
 
           case 'a': //sample once
+            // Change the flow of the program and goes to sample. 
             nextState = sampling;
             currentState = nextState;
-            //timer = millis();
-            //digitalWrite(2, HIGH);
             break;
 
-          case 'b': // status
+          case 'b': //  print the status of the data logger (logging interval)
             Serial.println("logging status: ");
             Serial.print("\t loggingInterval: ");
-            Serial.print (dataLogCMD.loggingInterval);
+            // Read and print the global variable data logger logging interval.
+            Serial.print (dataLogCMD.interval.logging);
+
+            // Read and print the global variable data logger flag logging.
+            // If the flag is set, print “data logger on”.
+            // If the flag is off, print “data logger is off”. 
             Serial.print("'\t' logging status: ");
             Serial.println((dataLogCMD.flag.logging) ? ("Datalogger On") : ("Datalogger Standby"));
 
@@ -433,27 +569,30 @@ void loop() {
             break;
 
           case 'c': // turn on datalogger
-
+            // Set the global global variable data logger flag logging. 
             dataLogCMD.flag.logging = 1;
             Serial.println((dataLogCMD.flag.logging) ? ("Datalogger On") : ("Datalogger Standby"));
-
-
-            //digitalWrite(4, HIGH);
+ 
             break;
           case 'd': // pause/stop data logging
-
+            //Reset the global global variable data logger flag logging. 
             dataLogCMD.flag.logging = 0;
             Serial.println((dataLogCMD.flag.logging) ? ("Datalogger On") : ("Datalogger Standby"));
-
-            //digitalWrite(5, HIGH);
+ 
             break;
          case 'e': // pause/stop data logging
-
+           // Change the flow of the program to gps read.
            nextState = gpsReading;
            currentState = nextState;
-            //digitalWrite(5, HIGH);
-            break;   
-          case 'h':
+             break;   
+         case 'f': //  system status (battery and solar panel voltage).
+             // Set the global global variable to reads battery, solar panel voltage, and internal temperature. 
+             // nextState = gpsReading;
+             // currentState = nextState;
+             break;     
+         case 'h':  //help
+            //Prints in the terminal serial all the possible options available in the menu. 
+
             Serial.println("press: ");
             Serial.println("\t a -> Sample once (testing)");
             Serial.println("\t b -> Status of the Datalogger");
@@ -461,71 +600,60 @@ void loop() {
             Serial.println("\t d -> Stop Logging Data - Green Led Solid");
             Serial.println("\t e -> Read GPS RADIO");
             Serial.println("\t f -> System status");
-            
-            
-          
             Serial.println("\t h -> Help");
             break;
-            Serial.println("Help: ");
-            //default:
-            // turn all the LEDs off:
-            //for (int thisPin = 2; thisPin < 7; thisPin++) {
-            //digitalWrite(thisPin, LOW);
-            //}
-        }
-      }
+         } // end switch 
+      }//end if serial 
 
-//      if(gpsReadFlag==1){
-//
-//        nextState = gpsReading;
-//        currentState = nextState;
-// 
-//      }
+      //Idle xbee receiving data
 
-            
+      //Check if there is data arriving through the xbee serial port,
+      //by calling a function named: xbee.readPacket. 
       xbee.readPacket();
+      
+      // If there are data available then: 
       if (xbee.getResponse().isAvailable()) {
-                printRTC('a'); // prints hh:mm:ss
-        Serial.println("Receiving");
-        digitalWrite(state1Led, LOW);  // turn the LED on (HIGH is the voltage level)
-        digitalWrite(state2Led, LOW);  // sampling led
-        digitalWrite(state3Led, LOW);  // procesing led
-        digitalWrite(state4Led, LOW);  // logging led
-        digitalWrite(state5Led, LOW);  // transmitting data
-        digitalWrite(state6Led, HIGH); //receiving data
-        digitalWrite(state7Led, LOW);  //GPS
-        
+       
+        //If the xbee message is a zigbee receiving response type, 
+        // then Get response (full message).
+           // Print time stamp
+            printRTC('a'); // prints hh:mm:ss
+ 
+            //Print “receiving data xbee” message
+            Serial.println("Receiving");
+    
+            //Set the visual led indicator to Xbee receiving data.
+            digitalWrite(state1Led, LOW);  // turn the LED on (HIGH is the voltage level)
+            digitalWrite(state2Led, LOW);  // sampling led
+            digitalWrite(state3Led, LOW);  // procesing led
+            digitalWrite(state4Led, LOW);  // logging led
+            digitalWrite(state5Led, LOW);  // transmitting data
+            digitalWrite(state6Led, HIGH); //receiving data
+            digitalWrite(state7Led, LOW);  //GPS
+            
         if (xbee.getResponse().getApiId() == ZB_RX_RESPONSE) {
 
-          // now fill our zb rx class
-          xbee.getResponse().getZBRxResponse(rx);
-          printRTC('a'); // prints hh:mm:ss
+            // now fill our zb rx class
+            xbee.getResponse().getZBRxResponse(rx);
+          
+        
 
-          /*here, the address of the sender can be filtered.
+            /*here, the address of the sender can be filtered.
             it can be useful to learn if the data was sent by the gateway
-          */
-          if (rx.getRemoteAddress64().getLsb() == 0x406e61ac) {
-            Serial.println("Data Received from Gateway: ");
-            //            //print address
-            //            Serial.print((rx.getRemoteAddress64().getMsb() >> 24) & 0xff, HEX);
-            //            Serial.print(",");
-            //            Serial.print((rx.getRemoteAddress64().getMsb() >> 16) & 0xff, HEX);
-            //            Serial.print(",");
-            //            Serial.print((rx.getRemoteAddress64().getMsb() >> 8) & 0xff, HEX);
-            //            Serial.print(",");
-            //            Serial.print(rx.getRemoteAddress64().getMsb() & 0xff, HEX);
-            //            Serial.print(",");
-            //            Serial.print((rx.getRemoteAddress64().getLsb() >> 24) & 0xff, HEX);
-            //            Serial.print(",");
-            //            Serial.print((rx.getRemoteAddress64().getLsb() >> 16) & 0xff, HEX);
-            //            Serial.print(",");
-            //            Serial.print((rx.getRemoteAddress64().getLsb() >> 8) & 0xff, HEX);
-            //            Serial.print(",");
-            //            Serial.print(rx.getRemoteAddress64().getLsb() & 0xff, HEX);
-            //            Serial.println("");
 
-            Serial.println("data: ");
-            /*
+            Now, it is possible to “play” with the wireless message.
+            For example, it is possible to check address of the wireless 
+            sender and take different actions based on it. 
+            For this first prototype, the gateway address is already known 
+            by the wireless node, but in the future this can be dynamically 
+            implemented allowing easily the setting a different node as a gateway. 
+            
+            If the gateway is transmitting data, then: 
+
+            */
+            if (rx.getRemoteAddress64().getLsb() == 0x406e61ac) {
+              Serial.println("Data Received from Gateway: ");
+              /*
               this block of code helps with gettting the data from the xbee mesasge
               the data needs to be get using a char variable, and then converted
               into a string or int later on.
@@ -537,66 +665,78 @@ void loop() {
 
               *   */
 
-
+            //Create a local variable type char named dataRx
             char dataRx;
+            //data RX receives the first byte of the message. (first character)
+
             dataRx = rx.getData(0);
             
             switch (dataRx) {
+              //If the first byte is ‘#’, then (means there is a menu type message
               case '#': //Remote Control
+                //Reads the second byte of the message. 
                 dataRx = rx.getData(1);
+                // The second byte follows the same structure of the menu
+                //presented before in the serial communication. 
+                // If the second byte is:  
                 switch (rx.getData(1)) {
                   case 'a': //sample once
-                    Serial.print("Remote - Sample Request");
+                    // Change the flow of the program and goes to sample. 
                     nextState = sampling;
                     currentState = nextState;
-                    //timer = millis();
-                    //digitalWrite(2, HIGH);
                     break;
-
-                  case 'b': // status
-                  
-                    Serial.print("Remote - Status Request: ");
+        
+                  case 'b': //  print the status of the data logger (logging interval)
                     Serial.println("logging status: ");
                     Serial.print("\t loggingInterval: ");
-                    Serial.print (dataLogCMD.loggingInterval);
+                    // Read and print the global variable data logger logging interval.
+                    Serial.print (dataLogCMD.interval.logging);
+        
+                    // Read and print the global variable data logger flag logging.
+                    // If the flag is set, print “data logger on”.
+                    // If the flag is off, print “data logger is off”. 
                     Serial.print("'\t' logging status: ");
                     Serial.println((dataLogCMD.flag.logging) ? ("Datalogger On") : ("Datalogger Standby"));
-
+        
                     //digitalWrite(3, HIGH);
                     break;
-
+        
                   case 'c': // turn on datalogger
-                    Serial.print("Remote - Start: ");
+                    // Set the global global variable data logger flag logging. 
                     dataLogCMD.flag.logging = 1;
                     Serial.println((dataLogCMD.flag.logging) ? ("Datalogger On") : ("Datalogger Standby"));
-
-
-                    //digitalWrite(4, HIGH);
+         
                     break;
                   case 'd': // pause/stop data logging
-                    Serial.print("Remote - Stop: ");
+                    //Reset the global global variable data logger flag logging. 
                     dataLogCMD.flag.logging = 0;
                     Serial.println((dataLogCMD.flag.logging) ? ("Datalogger On") : ("Datalogger Standby"));
-
-                    //digitalWrite(5, HIGH);
+         
                     break;
-                  case 'h':
-                    Serial.print("Remote - Help: ");
+                 case 'e': // pause/stop data logging
+                   // Change the flow of the program to gps read.
+                   nextState = gpsReading;
+                   currentState = nextState;
+                     break;   
+                 case 'f': //  system status (battery and solar panel voltage).
+                     // Set the global global variable to reads battery, solar panel voltage, and internal temperature. 
+                     // nextState = gpsReading;
+                     // currentState = nextState;
+                     break;     
+                 case 'h':  //help
+                    //Prints in the terminal serial all the possible options available in the menu. 
+        
                     Serial.println("press: ");
                     Serial.println("\t a -> Sample once (testing)");
                     Serial.println("\t b -> Status of the Datalogger");
                     Serial.println("\t c -> Start Logging Data - Green Led Blinking");
                     Serial.println("\t d -> Stop Logging Data - Green Led Solid");
+                    Serial.println("\t e -> Read GPS RADIO");
+                    Serial.println("\t f -> System status");
                     Serial.println("\t h -> Help");
-                    break;
-                    //default:
-                    // turn all the LEDs off:
-                    //for (int thisPin = 2; thisPin < 7; thisPin++) {
-                    //digitalWrite(thisPin, LOW);
-                    //}
-                }
                 break;
-              default:
+              default: //If the byte is not a #, for now store the message in a string and prints it in the terminal serial for the user. 
+
                // char dataRx;
                 String strDataRx;
                 dataRx = rx.getData(0);
@@ -619,72 +759,130 @@ void loop() {
                 Serial.println(strDataRx);
                 Serial.println("");
                 
+                 Serial.println("here");
+                  nextState = idle;
+                    currentState = nextState;
+                  break;    
+                }// end switch menu
+               default: //If the byte is not a #, for now store the message in a string and prints it in the terminal serial for the user. 
+                 //Serial.println("here");
+                  nextState = idle;
+                    currentState = nextState;
+               break; 
+             }//end switch first byte
+             
+            }//end if that check at the sender address
+          }else{
+            // end if that check if the message is valid
+            //Serial.println("y");
+          }
+        }//end if that check if there is a new character on the xbee serial port
+  
+      break;// end switch case receiving data from xbee radio
+      
+      
+      
+      case sampling:    // your hand is close to the sensor
+           
+            printRTC('a'); // prints hh:mm:ss
+            Serial.println("Sampling");
+            
+            //************visual indicators************
+            digitalWrite(state1Led, LOW);  // turn the LED on (HIGH is the voltage level)
+            digitalWrite(state2Led, HIGH); // sampling led
+            digitalWrite(state3Led, LOW);  // processing led
+            digitalWrite(state4Led, LOW);  // logging data
+            digitalWrite(state5Led, LOW);  // transmitting led
+            digitalWrite(state6Led, LOW);  // receiving data
+            digitalWrite(state7Led, LOW);  // GPS
+            delay(1000);
+            //**************************************
+
+
+            if(dataLogCMD.request.externalSensors){
+              //read sensor data 
+              sensorLogData.globalID++;
+              sensorLogData.temperature = random(0, 5);
+              sensorLogData.relativeHumdity = random(0, 100);
+              sensorLogData.rainFall = random(0, 1);
             }
 
-            //            (0), DEC);
-            //            Serial.print(rx.getData(1), DEC);
-            //            Serial.print(rx.getData(2), DEC);
-            //            Serial.print(rx.getData(3), DEC);
-            //            Serial.print(rx.getData(4), DEC);
-            //            Serial.print(rx.getData(5), DEC);
-            //            Serial.print(rx.getData(6), DEC);
-            //            Serial.print(rx.getData(7), DEC);
-            //            Serial.print(rx.getData(8), DEC);
-            //            Serial.print(rx.getData(9), DEC);
-            
+
+            //read system sensors data
 
 
-          }
-//          nextState = receiving;
-//          currentState = nextState;
-        }
+           if(dataLogCMD.request.systemSensors){
+                /*read sensors, get stationID, get timeStamp*/
+                systemSensorData.globalID++;
+                
+               // timeStamp[10];
+               // stationID[10];
+               
+                systemSensorData.internalTemperature = analogRead(0);
+                systemSensorData.BatteryVoltage = analogRead(1);
+                systemSensorData.SolarPanVoltage = analogRead(2);
+                
+                systemSensorData.Current = 0; // not implemented in hardware yet. (may 23,2018)
+                
+             }
+           
 
-      }
-        break;
-      case sampling:    // your hand is close to the sensor
-        printRTC('a'); // prints hh:mm:ss
-        Serial.println("Sampling");
-
-        sensorLogData.globalID++;
-        sensorLogData.temperature = random(0, 5);
-        sensorLogData.relativeHumdity = random(0, 100);
-        sensorLogData.rainFall = random(0, 1);
-
-        digitalWrite(state1Led, LOW);  // turn the LED on (HIGH is the voltage level)
-        digitalWrite(state2Led, HIGH); // sampling led
-        digitalWrite(state3Led, LOW);  // processing led
-        digitalWrite(state4Led, LOW);  // logging data
-        digitalWrite(state5Led, LOW);  // transmitting led
-        digitalWrite(state6Led, LOW);  // receiving data
-        digitalWrite(state7Led, LOW);  // GPS
-        delay(1000);
-
-        nextState = processing;
-        currentState = nextState;
+            nextState = processing;
+            currentState = nextState;
 
         break;
       case processing:    // your hand is a few inches from the sensor
         printRTC('a'); // prints hh:mm:ss
         Serial.println("Processing");
 
-        //here it goes the calibration equations...
-        //      sensorLogData.temperature *= 2;
-        //      sensorLogData.relativeHumdity /=4);
-        //      sensorLogData.rainFall *= 6;
+            //here it goes the calibration equations...
+            //      sensorLogData.temperature *= 2;
+            //      sensorLogData.relativeHumdity /=4);
+            //      sensorLogData.rainFall *= 6;
+    
+            digitalWrite(state1Led, LOW);  // turn the LED on (HIGH is the voltage level)
+            digitalWrite(state2Led, LOW);  // sampling led
+            digitalWrite(state3Led, HIGH); // processing led
+            digitalWrite(state4Led, LOW);  // logging data
+            digitalWrite(state5Led, LOW);  // transmitting led
+            digitalWrite(state6Led, LOW);  // receiving data
+            digitalWrite(state7Led, LOW);  // GPS
+    
+            delay(1000);
+             
+            if(dataLogCMD.request.systemSensors){
+                    /*read sensors, get stationID, get timeStamp*/
+                    //systemSensorData.globalID++;
+                    
+                   // timeStamp[10];
+                   // stationID[10];
+                   
+                    systemSensorData.internalTemperature *= (5.0/1024.0);
+                    
+                    systemSensorData.BatteryVoltage *= (5.0/1024.0);
+                    systemSensorData.SolarPanVoltage *= (5.0/1024.0);
+                    
+                    systemSensorData.Current = 0; // not implemented in hardware yet. (may 23,2018)
 
-        digitalWrite(state1Led, LOW);  // turn the LED on (HIGH is the voltage level)
-        digitalWrite(state2Led, LOW);  // sampling led
-        digitalWrite(state3Led, HIGH); // processing led
-        digitalWrite(state4Led, LOW);  // logging data
-        digitalWrite(state5Led, LOW);  // transmitting led
-        digitalWrite(state6Led, LOW);  // receiving data
-        digitalWrite(state7Led, LOW);  // GPS
 
-        delay(1000);
-        dataLogCMD.request.sensor = 1;
-       
-        nextState = logging;
-        currentState = nextState;
+                  //examples of flag set/reset based on the system readings:
+//                       if(systemSensorData.BatteryVoltage <3.0){
+//                       dataLogCMD.flag.lowBattery = 1;
+//                       }else{
+//                         dataLogCMD.flag.lowBattery = 0;
+//                       }
+//  
+//                       if(systemSensorData.internalTemperature<30){
+//                       ddataLogCMD.flag.highInternalTemperature = 1;
+//                       }else{
+//                        dataLogCMD.flag.highInternalTemperature  = 0;
+//                       }
+                     
+              } 
+            dataLogCMD.request.sensor = 1;
+           
+            nextState = logging;
+            currentState = nextState;
 
         break;
 
@@ -699,8 +897,8 @@ void loop() {
         digitalWrite(state5Led, LOW);  // transmitting led
         digitalWrite(state6Led, LOW);  // receiving data
         digitalWrite(state7Led, LOW);  // GPS
-        delay(1000);
-
+          delay(1000);
+        /************************************************/
         
         if(dataLogCMD.request.sensor){
           // make a string for assembling the data to log:
@@ -732,7 +930,59 @@ void loop() {
            nextState = idle;
            currentState = nextState;
         }
+        else if(dataLogCMD.request.systemSensors){
+
+          systemSensorString = "";
+          //
+          systemSensorString += String(sensorLogData.globalID);
+          systemSensorString += ",";
+          systemSensorString += String(sensorLogData.stationID);
+          systemSensorString += ",";
+          systemSensorString += String(systemSensorData.internalTemperature);
+          systemSensorString += ",";
+          systemSensorString += String(systemSensorData.BatteryVoltage);
+          systemSensorString += ",";
+          systemSensorString += String(systemSensorData.SolarPanVoltage);
+          systemSensorString += ",";
+          systemSensorString += String(systemSensorData.Current);
+          systemSensorString += ",";
+
+
+          /*debug: print timestamp and log string (not necessary)******************************/
+          printRTC('a');
+          Serial.print("Datalog String,");
+          Serial.println(systemSensorString);
+
+          //here is where the magic happens: log system string into the sd card
+          datalog("system.txt", systemSensorString);
+
+          //reset global variable that requested the reading.
+          dataLogCMD.request.systemSensors = 0;
+
+          // Future implementation: here it depends. It can go to wireless transmission or to idle.
+          
+          //is the next state transmitting only if there is a transmitting request.. I think here should go back to idle
+          /*
+           * if(transmitting.systemSensors.request){
+           *  // then transmit system status log
+           *  
+           *    nextState = transmitting;
+           *     currentState = nextState;
+           *
+           * }else{
+           *    nextState = idle;
+           *    currentState = nextState;
+           * }  
+           * 
+           */
+           
+          nextState = idle;
+          currentState = nextState;
+
+        }
         break;
+
+        
       case transmitting:    // your hand is a few inches from the sensor
         printRTC('a'); // prints hh:mm:ss
         Serial.println("Transmitting");
@@ -747,13 +997,13 @@ void loop() {
 
 
         xbeetransmitData();
-        delay(1000);
+        delay(500);
 
         nextState = idle;
         currentState = nextState;
 
         break;
-      case receiving:    // your hand is nowhere near the sensor
+      case receiving:   // not implemented yet
         printRTC('a'); // prints hh:mm:ss
         Serial.println("Receiving");
         digitalWrite(state1Led, LOW);  // turn the LED on (HIGH is the voltage level)
@@ -763,14 +1013,13 @@ void loop() {
         digitalWrite(state5Led, LOW);  // transmitting data
         digitalWrite(state6Led, HIGH); //receiving data
         digitalWrite(state7Led, LOW);  //GPS
-
-
-
-        delay(1000);
+         delay(500);
         nextState = idle;
         currentState = nextState;
         break;
-      case gpsReading:    // your hand is nowhere near the sensor
+     
+      
+      case gpsReading:   
         
         Serial.println("GPS - Reading");
         digitalWrite(state1Led, LOW);  // turn the LED on (HIGH is the voltage level)
@@ -796,6 +1045,53 @@ void loop() {
         
        
         break;
+
+
+        case systemCheck:   
+        //system checkup routine description
+        /*
+         * 
+         * brief description:
+            read battery voltage
+            read solar panel voltage
+            read internal temperature 
+            log data in the SD file
+
+        Future implementation: 
+            take some action based on the battery voltage level, solar panel and internal temperature
+
+            transmit?
+               question: when I will transmitt the status of the system? 
+
+            I have to implement this flag dataLogCMD.request.SystemSensors
+        Missing: current sensing resistor/circuit to estimate power consumption
+        
+      
+        */
+        
+          Serial.println("system checkup");
+          
+          digitalWrite(state1Led, HIGH);  // turn the LED on (HIGH is the voltage level)
+          digitalWrite(state2Led, LOW);  // sampling led
+          digitalWrite(state3Led, LOW);  // procesing led
+          digitalWrite(state4Led, LOW);  // logging led
+          digitalWrite(state5Led, LOW);  // transmitting data
+          digitalWrite(state6Led, LOW);  //receiving data
+          digitalWrite(state7Led, LOW); //GPS
+  
+
+        dataLogCMD.request.systemSensors = 1; // set the flag variable to change the flux of the logger to read the system sensors
+ 
+      //  if(dataLogCMD.request.gps){ // if this flag was set, means the radio found lat and long
+          nextState = sampling;   // goes to the logging state, stores gps data in the file
+          currentState = nextState; // there, it reset the request flag and goes back to idle loop.
+       // }else{ // here I can give a second chance to the user/radio, as the coordinates where not found.
+        //          nextState = idle;
+        //          currentState = nextState;
+        //        }
+         
+        break;
+
       }
 
       delay(1000);
