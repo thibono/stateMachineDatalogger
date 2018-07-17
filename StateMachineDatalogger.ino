@@ -1,5 +1,6 @@
-/*
-  AgroClimate  Datalogger by Thiago B. Onofre
+/* 
+ *  
+ *  Datalogger by Thiago B. Onofre
 
   Pin:
 
@@ -137,10 +138,10 @@ float rhCurrent;
 float rhAverage;
 
 // RAIN FALL SENSOR
-const byte RAIN = 2;
+const byte rainGaugeInterruptPin = 2;
 
-float rain15Min; // [rain inches over the past 15min)] -- the accumulated rainfall in the past 15 min
-volatile float dailyrainin; // [rain inches so far today in local time]
+volatile long int rainClicks;// rain15Min; // [rain inches over the past 15min)] -- the accumulated rainfall in the past 15 min
+//volatile float dailyrainin; // [rain inches so far today in local time]
 
 // volatiles are subject to modification by IRQs
 volatile unsigned long raintime, rainlast, raininterval, rain;
@@ -148,7 +149,7 @@ volatile unsigned long raintime, rainlast, raininterval, rain;
 
 //Interrupt routines (these are called by the hardware interrupts, not by the main code)
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-void rainIRQ()
+void rainISR()
 // Count rain gauge bucket tips as they occur
 // Activated by the magnet and reed switch in the rain gauge, attached to input D2
 {
@@ -157,9 +158,10 @@ void rainIRQ()
 
   if (raininterval > 10) // ignore switch-bounce glitches less than 10mS after initial edge
   {
-    dailyrainin += 0.011; //Each dump is 0.011" of water
-    rain15Min   += 0.011; //Increase this minute's amount of rain
-
+//    dailyrainin += 0.011; //Each dump is 0.011" of water
+//    rain15Min   += 0.011; //Increase this minute's amount of rain
+    rainClicks++;
+    
     rainlast = raintime; // set up for next event
   }
 }
@@ -203,6 +205,7 @@ struct requests {
 };
 
 struct datalogCMD {
+  char units;
   char start;
   char pause;
   //int loggingInterval;
@@ -212,6 +215,11 @@ struct datalogCMD {
 };
 
 struct datalogCMD dataLogCMD;
+
+// define the names for data conversion in the processing subroutine
+#define metric 0
+#define imperial 1
+
 
 /*
  * usage example:
@@ -335,17 +343,20 @@ enum StateGPS stateGPS = 0;
 
 void setup() {
   _DEBUG = DEBUG_ON;
+  
   Serial.begin(9600);
   SDCardInit();
   SD_createFile("datalog.txt");
   SD_createFile("info.txt");
   SD_createFile("status.txt");
   SD_createFile("gps.txt");
-  datalog_printHeader();
+  //datalog_printHeader();
   RTCInit();
   GPS_Initialize();
+  
   Serial1.begin(9600);
   xbee.setSerial(Serial1);
+  
   //    inputString.reserve(200);
   //
   pinMode(state1Led, OUTPUT);
@@ -363,9 +374,25 @@ void setup() {
   sensorLogData.globalID = 0; // reset the global identifier for the sensor data. (have to find a better way to keep the sample id - maybe using the eeprom -
 
      dataLogCMD.flag.logging = 1;
+     
+  // set the units of the datalogger to metric
+  dataLogCMD.units = metric;
 
+  
+
+
+pinMode(rainGaugeInterruptPin, INPUT);
+  attachInterrupt(digitalPinToInterrupt(rainGaugeInterruptPin), rainISR, RISING);
   // put your setup code here, to run once:
 
+
+ // before going to main loop, it should store in the info file if the station is storing data in metric or imperial system
+   if (dataLogCMD.units == imperial){
+      datalog("info.txt", "imperial");
+
+   }else if(dataLogCMD.units == metric){
+         datalog("info.txt", "metric");
+   } 
 }
 
 void loop() {
@@ -407,6 +434,7 @@ void loop() {
             
             //  Print a message on the terminal serial: “logger ON”
             Serial.println("Idle - Logger On");
+          //  Serial.println(rainClicks); just a debug for the raingauge when i was using the function generator 
             
             
             digitalWrite(state1Led, !digitalRead(state1Led)); // toogle led status
@@ -798,14 +826,27 @@ void loop() {
             delay(1000);
             //**************************************
 
+//            Test routine 
+//            if(dataLogCMD.request.externalSensors){
+//              //read sensor data 
+//              sensorLogData.globalID++;
+//              sensorLogData.temperature = random(0, 5);
+//              sensorLogData.relativeHumdity = random(0, 100);
+//              sensorLogData.rainFall = random(0, 1);
+//            }
 
+
+            //chuva
             if(dataLogCMD.request.externalSensors){
               //read sensor data 
               sensorLogData.globalID++;
-              sensorLogData.temperature = random(0, 5);
-              sensorLogData.relativeHumdity = random(0, 100);
-              sensorLogData.rainFall = random(0, 1);
+              
+              // read data from global variable rain clicks in the interrupt service routine (ISR)
+              sensorLogData.rainFall = rainClicks;
+              // reset rain clicks, which is the global variable in the ISR.
+              rainClicks = 0; 
             }
+
 
 
             //read system sensors data
@@ -848,8 +889,34 @@ void loop() {
             digitalWrite(state6Led, LOW);  // receiving data
             digitalWrite(state7Led, LOW);  // GPS
     
-            delay(1000);
-             
+            delay(500);
+
+          // do some data processing here
+           if(dataLogCMD.request.externalSensors){
+
+              // check if the units are in imperial or in metric system
+              if (dataLogCMD.units == imperial){
+
+//              sensorLogData.temperature = random(0, 5);
+//              sensorLogData.relativeHumdity = random(0, 100);
+              // rainfall in inches
+              sensorLogData.rainFall *= 0.11;
+
+              }else if(dataLogCMD.units == metric){
+                
+                //rainfall in millimiters 
+                sensorLogData.rainFall *= 0.25;
+                
+              } 
+              //read sensor data 
+//              sensorLogData.globalID++;
+//              
+//              // read data from global variable rain clicks in the interrupt service routine (ISR)
+//              sensorLogData.rainFall = rainClicks;
+//              // reset rain clicks, which is the global variable in the ISR.
+//              rainClicks = 0; 
+            }
+
             if(dataLogCMD.request.systemSensors){
                     /*read sensors, get stationID, get timeStamp*/
                     //systemSensorData.globalID++;
@@ -906,10 +973,10 @@ void loop() {
           //
           sensorLog += String(sensorLogData.globalID);
           sensorLog += ",";
-          sensorLog += String(sensorLogData.temperature);
-          sensorLog += ",";
-          sensorLog += String(sensorLogData.relativeHumdity);
-          sensorLog += ",";
+//          sensorLog += String(sensorLogData.temperature);
+//          sensorLog += ",";
+//          sensorLog += String(sensorLogData.relativeHumdity);
+//          sensorLog += ",";
           sensorLog += String(sensorLogData.rainFall);
           sensorLog += ",";
   
@@ -1164,7 +1231,7 @@ void loop() {
     // so you have to close this one before opening another.
     dataFile = SD.open("datalog.txt", FILE_WRITE);
 
-    dataFile.println("YY/MM/DD,hh:mm,TEMP(C_deg),RH(%),");
+   // dataFile.println("YY/MM/DD,hh:mm,TEMP(C_deg),RH(%),");
 
     dataFile.close();
     // print to the serial port too:
