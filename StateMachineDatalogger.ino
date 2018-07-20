@@ -373,7 +373,7 @@ void setup() {
 
   sensorLogData.globalID = 0; // reset the global identifier for the sensor data. (have to find a better way to keep the sample id - maybe using the eeprom -
 
-     dataLogCMD.flag.logging = 1;
+  dataLogCMD.flag.logging = 1;
      
   // set the units of the datalogger to metric
   dataLogCMD.units = metric;
@@ -425,7 +425,6 @@ void loop() {
         // is the logger mode on?
         if (dataLogCMD.flag.logging) {
             // yes the logger mode is on, print something: 
-         
             
             // Toggle an  led to visually indicate the system is logging data. The other leds are kept off.
 
@@ -472,7 +471,7 @@ void loop() {
         // If the RTC module is not running, then we the time is updated manually:
         if (!rtc.isrunning()) {
           //Print hours, minutes, seconds. 
-          printRTC('t'); // prints hh:mm:ss
+         // printRTC('t'); // prints hh:mm:ss
           // Increment global variable seconds.
           seconds++;
            // If global variable seconds is equal to 60 seconds:
@@ -558,8 +557,6 @@ void loop() {
             }
  
         }
-
-
 
       //Idle serial port 
       // read serial port, check for commands
@@ -836,7 +833,8 @@ void loop() {
 //            }
 
 
-            //chuva
+
+            
             if(dataLogCMD.request.externalSensors){
               //read sensor data 
               sensorLogData.globalID++;
@@ -845,6 +843,12 @@ void loop() {
               sensorLogData.rainFall = rainClicks;
               // reset rain clicks, which is the global variable in the ISR.
               rainClicks = 0; 
+
+              //read temperature and relative humidity
+              sensorLogData.temperature = analogRead(3);
+              sensorLogData.relativeHumdity = analogRead(4);
+              
+                
             }
 
 
@@ -896,14 +900,31 @@ void loop() {
 
               // check if the units are in imperial or in metric system
               if (dataLogCMD.units == imperial){
-
-//              sensorLogData.temperature = random(0, 5);
-//              sensorLogData.relativeHumdity = random(0, 100);
+              //temperature in Faherent
+              sensorLogData.temperature = (((sensorLogData.temperature*(5.0/1023.0))*100.0)-40);
+              
+              //relative humidity in percentage
+              sensorLogData.relativeHumdity = ((sensorLogData.relativeHumdity*(5.0/1023.0))*100.0);
+              
               // rainfall in inches
               sensorLogData.rainFall *= 0.11;
 
               }else if(dataLogCMD.units == metric){
+
                 
+                //temperature in Celsius
+                sensorLogData.temperature = (((sensorLogData.temperature*(5.0/1023.0))));
+
+                //relative humidity in percentage
+                sensorLogData.relativeHumdity = ((sensorLogData.relativeHumdity*(5.0/1023.0)));
+              
+
+//                //temperature in Celsius
+//                sensorLogData.temperature = (((sensorLogData.temperature*(5.0/1023.0))*100.0)-40);
+//
+//                //relative humidity in percentage
+//                sensorLogData.relativeHumdity = ((sensorLogData.relativeHumdity*(5.0/1023.0))*100.0);
+//              
                 //rainfall in millimiters 
                 sensorLogData.rainFall *= 0.25;
                 
@@ -927,6 +948,7 @@ void loop() {
                     systemSensorData.internalTemperature *= (5.0/1024.0);
                     
                     systemSensorData.BatteryVoltage *= (5.0/1024.0);
+                    
                     systemSensorData.SolarPanVoltage *= (5.0/1024.0);
                     
                     systemSensorData.Current = 0; // not implemented in hardware yet. (may 23,2018)
@@ -973,10 +995,10 @@ void loop() {
           //
           sensorLog += String(sensorLogData.globalID);
           sensorLog += ",";
-//          sensorLog += String(sensorLogData.temperature);
-//          sensorLog += ",";
-//          sensorLog += String(sensorLogData.relativeHumdity);
-//          sensorLog += ",";
+          sensorLog += String(sensorLogData.temperature);
+          sensorLog += ",";
+          sensorLog += String(sensorLogData.relativeHumdity);
+          sensorLog += ",";
           sensorLog += String(sensorLogData.rainFall);
           sensorLog += ",";
   
