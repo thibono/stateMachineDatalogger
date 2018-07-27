@@ -433,6 +433,21 @@ void loop() {
             
             //  Print a message on the terminal serial: “logger ON”
             Serial.println("Idle - Logger On");
+
+//            Serial.print("\t temp: ");
+//            
+//            Serial.print((((analogRead(3)*(5.0/1023.0))*100.0)-40));
+//
+//            Serial.print(" C \t temp : ");
+//
+//            Serial.print((((((analogRead(3)*(5.0/1023.0))*100.0)-40)*9/5) + 32));
+//
+//            Serial.print(" F \t rh: ");
+//            
+//            Serial.println((((analogRead(4)*(5.0/1023.0))*100.0)));
+         
+           sensorLogData.relativeHumdity = ((sensorLogData.relativeHumdity*(5.0/1023.0))*100.0);
+
           //  Serial.println(rainClicks); just a debug for the raingauge when i was using the function generator 
             
             
@@ -474,6 +489,9 @@ void loop() {
          // printRTC('t'); // prints hh:mm:ss
           // Increment global variable seconds.
           seconds++;
+
+          // testing temp/rh sensors
+
            // If global variable seconds is equal to 60 seconds:
           if (seconds == 60) {
             // Reset global variable seconds.
@@ -615,6 +633,33 @@ void loop() {
              // nextState = gpsReading;
              // currentState = nextState;
              break;     
+
+         case 'u': // display units and offer the option to change units
+                     
+              
+//              while(Serial.available()>0){
+               inByte = Serial.read();
+                if((inByte==0)||(inByte=='m')){
+                  if( dataLogCMD.units == metric){
+                     Serial.println("'\t' Current logging system already in metric.");
+                  }else{
+                    Serial.println("'\t' Current logging system changed: ");
+                    dataLogCMD.units = metric;
+                  }
+                }else if((inByte==1)||(inByte=='p')){
+                  if( dataLogCMD.units == imperial){
+                     Serial.println("'\t' Current logging system already in imperial.");
+                  }else{
+                    Serial.println("'\t' Current logging system changed to imperial: ");
+                    dataLogCMD.units = imperial;
+                  }
+                   
+                }else{
+                  Serial.println("'\t' Current logging system not changed: ");
+                  Serial.println((dataLogCMD.units) ? ("Metric") : ("Imperial"));
+                }
+        
+             break;  
          case 'h':  //help
             //Prints in the terminal serial all the possible options available in the menu. 
 
@@ -625,6 +670,9 @@ void loop() {
             Serial.println("\t d -> Stop Logging Data - Green Led Solid");
             Serial.println("\t e -> Read GPS RADIO");
             Serial.println("\t f -> System status");
+            Serial.println("\t u -> Change logging unit system: ");
+            Serial.println("\t\t to change logging unit, please type the combination: "); 
+            Serial.println("\t\t\t um or u0 for metric; u1 or up for imperial. ");
             Serial.println("\t h -> Help");
             break;
          } // end switch 
@@ -722,6 +770,10 @@ void loop() {
                     // If the flag is off, print “data logger is off”. 
                     Serial.print("'\t' logging status: ");
                     Serial.println((dataLogCMD.flag.logging) ? ("Datalogger On") : ("Datalogger Standby"));
+
+                    Serial.print("'\t' logging units: ");
+                    Serial.println((dataLogCMD.units) ? ("Metric") : ("Imperial"));
+
         
                     //digitalWrite(3, HIGH);
                     break;
@@ -736,6 +788,8 @@ void loop() {
                     //Reset the global global variable data logger flag logging. 
                     dataLogCMD.flag.logging = 0;
                     Serial.println((dataLogCMD.flag.logging) ? ("Datalogger On") : ("Datalogger Standby"));
+                   
+            
          
                     break;
                  case 'e': // pause/stop data logging
@@ -747,7 +801,9 @@ void loop() {
                      // Set the global global variable to reads battery, solar panel voltage, and internal temperature. 
                      // nextState = gpsReading;
                      // currentState = nextState;
-                     break;     
+                     break;  
+                     
+                       
                  case 'h':  //help
                     //Prints in the terminal serial all the possible options available in the menu. 
         
@@ -758,6 +814,7 @@ void loop() {
                     Serial.println("\t d -> Stop Logging Data - Green Led Solid");
                     Serial.println("\t e -> Read GPS RADIO");
                     Serial.println("\t f -> System status");
+                    Serial.println("\t u -> Logging units (metric/imperial)");
                     Serial.println("\t h -> Help");
                 break;
               default: //If the byte is not a #, for now store the message in a string and prints it in the terminal serial for the user. 
@@ -845,7 +902,9 @@ void loop() {
               rainClicks = 0; 
 
               //read temperature and relative humidity
-              sensorLogData.temperature = analogRead(3);
+
+              sensorLogData.temperature  = analogRead(3);
+
               sensorLogData.relativeHumdity = analogRead(4);
               
                 
@@ -900,31 +959,23 @@ void loop() {
 
               // check if the units are in imperial or in metric system
               if (dataLogCMD.units == imperial){
-              //temperature in Faherent
-              sensorLogData.temperature = (((sensorLogData.temperature*(5.0/1023.0))*100.0)-40);
-              
-              //relative humidity in percentage
-              sensorLogData.relativeHumdity = ((sensorLogData.relativeHumdity*(5.0/1023.0))*100.0);
-              
-              // rainfall in inches
-              sensorLogData.rainFall *= 0.11;
+                //temperature in Faherent
+                sensorLogData.temperature = (((((sensorLogData.temperature*(5.0/1023.0))*100.0)-40)*9/5) + 32);
+                
+                //relative humidity in percentage
+                sensorLogData.relativeHumdity = ((sensorLogData.relativeHumdity*(5.0/1023.0))*100.0);
+                
+                // rainfall in inches
+                sensorLogData.rainFall *= 0.11;
 
               }else if(dataLogCMD.units == metric){
-
-                
-                //temperature in Celsius
-                sensorLogData.temperature = (((sensorLogData.temperature*(5.0/1023.0))));
-
-                //relative humidity in percentage
-                sensorLogData.relativeHumdity = ((sensorLogData.relativeHumdity*(5.0/1023.0)));
-              
-
-//                //temperature in Celsius
-//                sensorLogData.temperature = (((sensorLogData.temperature*(5.0/1023.0))*100.0)-40);
-//
-//                //relative humidity in percentage
-//                sensorLogData.relativeHumdity = ((sensorLogData.relativeHumdity*(5.0/1023.0))*100.0);
-//              
+ 
+                  //temperature in Celsius
+                sensorLogData.temperature = (((sensorLogData.temperature*(5.0/1023.0))*100.0)-40);
+   
+                  //relative humidity in percentage
+                sensorLogData.relativeHumdity = ((sensorLogData.relativeHumdity*(5.0/1023.0))*100.0);
+               
                 //rainfall in millimiters 
                 sensorLogData.rainFall *= 0.25;
                 
@@ -1428,20 +1479,25 @@ void loop() {
     // RTC initialization
     if (_DEBUG) {
       Serial.println("Initializing RTC.");
-     // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+       rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
       
     }
 
-    if (! rtc.begin()) {
+    if (!rtc.begin()) {
       if (_DEBUG) {
         Serial.println("Couldn't find RTC");
+      }
+    }else{
+
+      if (_DEBUG) {
+        Serial.println("RTC started");
       }
     }
 
     if (rtc.isrunning()) {
 
-      //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-      rtc.adjust(DateTime(__DATE__, __TIME__));
+      rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+      //rtc.adjust(DateTime(__DATE__, __TIME__));
       Serial.println("RTC initialized. Current time: ");
       printRTC('a');
 
@@ -1452,7 +1508,13 @@ void loop() {
       currentHour = 0;
       previousMin  = 99;
       previousHour = 99;
+    }else{
+
+      if (_DEBUG) {
+        Serial.println("RTC not running");
+      }
     }
+    
     //   else{ // if rtc is running, print and update the time.
     //    rtc_running = 1; // this variable tells main program the rtc is running.
     //
