@@ -354,7 +354,7 @@ void setup() {
   Serial.begin(9600);
   SDCardInit();
   SD_createFile("datalog.txt");
-  SD_createFile("datalog_15min.txt");
+  SD_createFile("quarterH.txt");
   SD_createFile("info.txt");
   SD_createFile("status.txt");
   SD_createFile("gps.txt");
@@ -401,6 +401,42 @@ void setup() {
   } else if (dataLogCMD.units == metric) {
     datalog("info.txt", "metric");
   }
+
+   //read temp and relative humidity sensors: 
+   
+   sensorLogData.temperature  = analogRead(3);
+   sensorLogData.relativeHumdity = analogRead(4);
+    
+    // check if the units are in imperial or in metric system
+    if (dataLogCMD.units == imperial) {
+      //temperature in Faherent
+      sensorLogData.temperature = (((((sensorLogData.temperature * (5.0 / 1023.0)) * 100.0) - 40) * 9 / 5) + 32);
+    
+      //relative humidity in percentage
+      sensorLogData.relativeHumdity = ((sensorLogData.relativeHumdity * (5.0 / 1023.0)) * 100.0);
+    
+      // rainfall in inches
+      sensorLogData.rainFall *= 0.11;
+    
+    } else if (dataLogCMD.units == metric) {
+    
+      //temperature in Celsius
+      sensorLogData.temperature = (((sensorLogData.temperature * (5.0 / 1023.0)) * 100.0) - 40);
+      
+      //relative humidity in percentage
+      sensorLogData.relativeHumdity = ((sensorLogData.relativeHumdity * (5.0 / 1023.0)) * 100.0);
+      
+      if(sensorLogData.relativeHumdity >= 100){
+        sensorLogData.relativeHumdity = 100;
+      }
+    
+   }
+   //marker
+   tempPrevious = sensorLogData.temperature;
+   //tempMin = sensorLogData.temperature;
+
+   rhPrevious = sensorLogData.relativeHumdity;
+  // rhMin = sensorLogData.relativeHumdity;
 }
 
 void loop() {
@@ -437,10 +473,10 @@ void loop() {
           // Toggle an  led to visually indicate the system is logging data. The other leds are kept off.
 
           // Print year, month, day, hours, minutes, and seconds in the terminal serial.
-          printRTC('a'); // prints hh:mm:ss
+         // printRTC('a'); // prints hh:mm:ss
 
           //  Print a message on the terminal serial: “logger ON”
-          Serial.println("Idle - Logger On");
+         // Serial.println("Idle - Logger On");
 
           //            Serial.print("\t temp: ");
           //
@@ -534,28 +570,31 @@ void loop() {
         // yes, it is a new minute.
         // Global variable previous minute is updated with the value of current minute.
         previousMin = currentMin;
-
-        // If data logger is on (means if the flag datalogCMD logging is set) then
+       
+       
+         Serial.println(previousMin);
+          Serial.println(currentMin);
+        
+                // If data logger is on (means if the flag datalogCMD logging is set) then
         // is the logger mode on?
         if (dataLogCMD.flag.logging) {
           // yes the logger mode is on, print something:
           // okay, the logger is on, but is it sample time right now?
-          if (currentMin % dataLogCMD.interval.logging) {
+          //if (currentMin % dataLogCMD.interval.logging) {
             dataLogCMD.request.externalSensors = 1;
 
             // Update the state of the state machine from Idle to Sample sensors.
             nextState = sampling; // updates the state of the datalogger
             currentState = nextState; // goes to the next state.
-            
-            if (currentMin % 15) {
+
+            Serial.println(currentMin%5);
+            if (currentMin % 5 == 0) {
+                  Serial.println(dataLogCMD.request.quarterHour);
+
               dataLogCMD.request.quarterHour = 1;
             }
-          }
-
-
-          
+          //}
         }
-
 
         // the logging mode does not need to be on for the system check routine to be executed.
         if (currentMin % dataLogCMD.interval.checkSystem) {
@@ -998,24 +1037,49 @@ void loop() {
           sensorLogData.rainFall *= 0.25;
 
         }
-
+ 
+        tempAverage = (sensorLogData.temperature + tempPrevious)/2;
         
+        rhAverage = (sensorLogData.relativeHumdity + rhPrevious)/2;
         // marker : need to think about how to extract min max and average for the 15 min data.   
-        tempMin = 0;
-        tempMax = 0;
-        rhMin = 0;
-        rhMax = 0;
+        
+        //find the maximum temperature during a 15 min interval
+        if(sensorLogData.temperature>=tempMax){
+          tempMax = sensorLogData.temperature;
+        }
+        
+        //find the mininum temperature during a 15 min interval
+        if(sensorLogData.temperature<=tempMin){
+          tempMin = sensorLogData.temperature;
+        }
+
+        //find the maximum relative humdity during a 15 min interval
+        if(sensorLogData.relativeHumdity>=rhMax){
+          rhMax = sensorLogData.relativeHumdity;
+        }
+        
+        //find the maximum relative humdity during a 15 min interval
+        if(sensorLogData.relativeHumdity<=rhMin){
+          rhMin = sensorLogData.relativeHumdity;
+        }
+
+
+        Serial.print("tempMax: ");
+        Serial.println(tempMax);
+        Serial.print("tempMin: ");
+        Serial.println(tempMin);
+        Serial.print("tempAve: ");
+        Serial.println(tempAverage);
+        Serial.print("rhMax: ");
+        Serial.println(rhMax);
+        Serial.print("rhMin: ");
+        Serial.println(rhMin);
+        Serial.print("rhAve: ");
+        Serial.println(rhAverage);
+
+        //accumulate rainfall during a 15 min interval
         rainAccumulated += sensorLogData.rainFall;
-
-        //read sensor data
-        //              sensorLogData.globalID++;
-        //
-        //              // read data from global variable rain clicks in the interrupt service routine (ISR)
-        //              sensorLogData.rainFall = rainClicks;
-        //              // reset rain clicks, which is the global variable in the ISR.
-        //              rainClicks = 0;
       }
-
       if (dataLogCMD.request.systemSensors) {
         /*read sensors, get stationID, get timeStamp*/
         //systemSensorData.globalID++;
@@ -1081,12 +1145,12 @@ void loop() {
         sensorLog += ",";
 
         printRTC('a');
-        Serial.print("Datalog String,");
+        Serial.print("1 Min Data: ");
 
         Serial.println(sensorLog);
         datalog("datalog.txt", sensorLog);
 
-
+       
        ///marker: stores 15 minute data of min max average for temp, rh, rain fall 
        
        if(dataLogCMD.request.quarterHour == 1){
@@ -1113,19 +1177,41 @@ void loop() {
 
           // reset quarter hour flag
           dataLogCMD.request.quarterHour = 0;
+          Serial.print("15 Min Data: ");
 
-          Serial.println(sensorLog);
-          datalog("datalog_15min.txt", sensorLog);
+        Serial.println(sensorLog);
+           
+          datalog("QuarterH.txt", sensorLog);
 
           // reset 15 minute rain accumulated global variable
           rainAccumulated = 0;
 
-       }
-        dataLogCMD.request.sensor = 0;
-        nextState = transmitting;
-        currentState = nextState;
+          tempMax = sensorLogData.temperature;
+       
+          tempMin = sensorLogData.temperature;
 
-        
+          tempPrevious = sensorLogData.temperature;
+    
+          rhMax = sensorLogData.relativeHumdity;
+  
+          rhMin = sensorLogData.relativeHumdity;
+
+          rhPrevious = sensorLogData.relativeHumdity;
+
+
+          // if it is 15 minutes, than transmit
+          dataLogCMD.request.quarterHour =0;
+          dataLogCMD.request.sensor = 0;
+          nextState = transmitting;
+          currentState = nextState;
+          break;
+       } 
+          // if it is 15 minutes, than transmit
+          dataLogCMD.request.sensor = 0;
+          nextState = idle;
+          currentState = nextState;
+
+       
       }
       else if (dataLogCMD.request.gps) {
         printRTC('a');
@@ -1359,7 +1445,9 @@ void datalog(String FileNameString, String dataString) {
   }
   // if the file isn't open, pop up an error:
   else {
-    Serial.println("error opening datalog.txt");
+    Serial.print("error opening: ");
+    Serial.println(FileNameString);
+    
   }
 }
 
@@ -1563,8 +1651,8 @@ void RTCInit() {
 
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
     //rtc.adjust(DateTime(__DATE__, __TIME__));
-    Serial.println("RTC initialized. Current time: ");
-    printRTC('a');
+   // Serial.println("RTC initialized. Current time: ");
+   // printRTC('a');
 
     rtc_running = 1; // this flag tells main loop the rtc wasn't initialized.
     //manually initialize time variables.
