@@ -15,7 +15,7 @@
    SDA - A4
 
   Jan 12th, 2018 - Swtching from arduino Uno to Arduino Mega
-
+maker
 
 
   library declaration */
@@ -358,7 +358,20 @@ void setup() {
   SD_createFile("info.txt");
   SD_createFile("status.txt");
   SD_createFile("gps.txt");
-  //datalog_printHeader();
+
+  // Print header of the 1 minute datalogger file in the sd card
+
+    dataFile = SD.open("datalog.txt", FILE_WRITE);
+    dataFile.println("yyyy/mm/dd,hh:mm,Sample_ID,Temp,RH,,Rain_accumulated");
+    dataFile.close();
+
+  // Print header of the 15 minute datalogger file in the sd card
+  
+    dataFile = SD.open("quarterH.txt", FILE_WRITE);
+    dataFile.println("yyyy/mm/dd,hh:mm,Temp_min,Temp_ave,Temp_max,RH_min,RH_ave,RH_max,Rain_accumulated");
+    dataFile.close();
+  
+  //
   RTCInit();
   GPS_Initialize();
 
@@ -431,12 +444,17 @@ void setup() {
       }
     
    }
-   //marker
+  
    tempPrevious = sensorLogData.temperature;
-   //tempMin = sensorLogData.temperature;
+   tempMax = sensorLogData.temperature;
+   tempMin = sensorLogData.temperature;
 
    rhPrevious = sensorLogData.relativeHumdity;
-  // rhMin = sensorLogData.relativeHumdity;
+   rhMax = sensorLogData.relativeHumdity;
+   rhMin = sensorLogData.relativeHumdity;
+
+   dataLogCMD.request.quarterHour = 0;
+
 }
 
 void loop() {
@@ -570,39 +588,41 @@ void loop() {
         // yes, it is a new minute.
         // Global variable previous minute is updated with the value of current minute.
         previousMin = currentMin;
-       
-       
-         Serial.println(previousMin);
-          Serial.println(currentMin);
-        
-                // If data logger is on (means if the flag datalogCMD logging is set) then
+ 
+         //marker
+        // If data logger is on (means if the flag datalogCMD logging is set) then
         // is the logger mode on?
         if (dataLogCMD.flag.logging) {
           // yes the logger mode is on, print something:
           // okay, the logger is on, but is it sample time right now?
           //if (currentMin % dataLogCMD.interval.logging) {
             dataLogCMD.request.externalSensors = 1;
+ 
+//            Serial.println(currentMin%15);
+            if (currentMin % 15 == 0) {
+                 //
+              dataLogCMD.request.quarterHour = 1;
+            }
+            if (currentMin % 5 == 0) {
+                 // Serial.println(dataLogCMD.request.quarterHour);
+
+              dataLogCMD.request.systemSensors = 1;
+            }
 
             // Update the state of the state machine from Idle to Sample sensors.
             nextState = sampling; // updates the state of the datalogger
             currentState = nextState; // goes to the next state.
 
-            Serial.println(currentMin%5);
-            if (currentMin % 5 == 0) {
-                  Serial.println(dataLogCMD.request.quarterHour);
-
-              dataLogCMD.request.quarterHour = 1;
-            }
-          //}
+             
         }
 
-        // the logging mode does not need to be on for the system check routine to be executed.
-        if (currentMin % dataLogCMD.interval.checkSystem) {
-          dataLogCMD.request.systemSensors = 1;
-          // Update the state of the state machine from Idle to Sample sensors.
-          nextState = sampling; // updates the state of the datalogger
-          currentState = nextState; // goes to the next state.
-        }
+//        // the logging mode does not need to be on for the system check routine to be executed.
+//        if (currentMin % dataLogCMD.interval.checkSystem) {
+//          dataLogCMD.request.systemSensors = 1;
+//          // Update the state of the state machine from Idle to Sample sensors.
+//          nextState = sampling; // updates the state of the datalogger
+//          currentState = nextState; // goes to the next state.
+//        }
 
 
         // we have to check for a "new" hour, this avoids over reading
@@ -842,9 +862,7 @@ void loop() {
                     //Reset the global global variable data logger flag logging.
                     dataLogCMD.flag.logging = 0;
                     Serial.println((dataLogCMD.flag.logging) ? ("Datalogger On") : ("Datalogger Standby"));
-
-
-
+ 
                     break;
                   case 'e': // pause/stop data logging
                     // Change the flow of the program to gps read.
@@ -1041,7 +1059,6 @@ void loop() {
         tempAverage = (sensorLogData.temperature + tempPrevious)/2;
         
         rhAverage = (sensorLogData.relativeHumdity + rhPrevious)/2;
-        // marker : need to think about how to extract min max and average for the 15 min data.   
         
         //find the maximum temperature during a 15 min interval
         if(sensorLogData.temperature>=tempMax){
@@ -1064,18 +1081,18 @@ void loop() {
         }
 
 
-        Serial.print("tempMax: ");
-        Serial.println(tempMax);
-        Serial.print("tempMin: ");
-        Serial.println(tempMin);
-        Serial.print("tempAve: ");
-        Serial.println(tempAverage);
-        Serial.print("rhMax: ");
-        Serial.println(rhMax);
-        Serial.print("rhMin: ");
-        Serial.println(rhMin);
-        Serial.print("rhAve: ");
-        Serial.println(rhAverage);
+//        Serial.print("tempMax: ");
+//        Serial.println(tempMax);
+//        Serial.print("tempMin: ");
+//        Serial.println(tempMin);
+//        Serial.print("tempAve: ");
+//        Serial.println(tempAverage);
+//        Serial.print("rhMax: ");
+//        Serial.println(rhMax);
+//        Serial.print("rhMin: ");
+//        Serial.println(rhMin);
+//        Serial.print("rhAve: ");
+//        Serial.println(rhAverage);
 
         //accumulate rainfall during a 15 min interval
         rainAccumulated += sensorLogData.rainFall;
@@ -1087,7 +1104,7 @@ void loop() {
         // timeStamp[10];
         // stationID[10];
 
-        systemSensorData.internalTemperature *= (5.0 / 1024.0);
+        
 
         systemSensorData.BatteryVoltage *= (5.0 / 1024.0);
 
@@ -1095,7 +1112,21 @@ void loop() {
 
         systemSensorData.Current = 0; // not implemented in hardware yet. (may 23,2018)
 
+ 
 
+        // convert the value to resistance
+        systemSensorData.internalTemperature = 1023 / systemSensorData.internalTemperature - 1;
+        systemSensorData.internalTemperature = 10000.0 / systemSensorData.internalTemperature;
+        
+        float steinhart;
+        steinhart = systemSensorData.internalTemperature / 10000;     // (R/Ro)
+        steinhart = log(steinhart);                  // ln(R/Ro)
+        steinhart /= 3950;                   // 1/B * ln(R/Ro)
+        steinhart += 1.0 / (25 + 273.15); // + (1/To)
+        steinhart = 1.0 / steinhart;                 // Invert
+        steinhart -= 273.15;                         // convert to C
+
+        systemSensorData.internalTemperature = steinhart;
         //examples of flag set/reset based on the system readings:
         //                       if(systemSensorData.BatteryVoltage <3.0){
         //                       dataLogCMD.flag.lowBattery = 1;
@@ -1150,7 +1181,13 @@ void loop() {
         Serial.println(sensorLog);
         datalog("datalog.txt", sensorLog);
 
+       // if it is 15 minutes, than transmit
+          dataLogCMD.request.sensor = 0;
+          nextState = idle;
+          currentState = nextState;
+
        
+      }
        ///marker: stores 15 minute data of min max average for temp, rh, rain fall 
        
        if(dataLogCMD.request.quarterHour == 1){
@@ -1162,27 +1199,28 @@ void loop() {
            // sensorLog += ",";
             sensorLog += String(tempMin);
             sensorLog += ",";
-            sensorLog += String(tempMax);
-            sensorLog += ",";          
             sensorLog += String(tempAverage);
-            sensorLog += ",";           
+            sensorLog += ",";
+            sensorLog += String(tempMax);
+            sensorLog += ",";            
             sensorLog += String(rhMin);
             sensorLog += ",";
-            sensorLog += String(rhMax);
-            sensorLog += ",";
             sensorLog += String(rhAverage);
+            sensorLog += ",";
+            sensorLog += String(rhMax);
             sensorLog += ",";              
             sensorLog += String(rainAccumulated);
             sensorLog += ",";   
 
-          // reset quarter hour flag
-          dataLogCMD.request.quarterHour = 0;
+         
           Serial.print("15 Min Data: ");
 
-        Serial.println(sensorLog);
+          Serial.println(sensorLog);
            
           datalog("QuarterH.txt", sensorLog);
+          
 
+          
           // reset 15 minute rain accumulated global variable
           rainAccumulated = 0;
 
@@ -1197,23 +1235,17 @@ void loop() {
           rhMin = sensorLogData.relativeHumdity;
 
           rhPrevious = sensorLogData.relativeHumdity;
-
-
-          // if it is 15 minutes, than transmit
-          dataLogCMD.request.quarterHour =0;
+ 
+          // reset quarter-hour flag
+          dataLogCMD.request.quarterHour = 0;
           dataLogCMD.request.sensor = 0;
           nextState = transmitting;
           currentState = nextState;
-          break;
+          
        } 
-          // if it is 15 minutes, than transmit
-          dataLogCMD.request.sensor = 0;
-          nextState = idle;
-          currentState = nextState;
-
-       
-      }
-      else if (dataLogCMD.request.gps) {
+          
+     
+      if (dataLogCMD.request.gps) {
         printRTC('a');
         Serial.println(gpsLatLongString);
         datalog("gps.txt", gpsLatLongString);
@@ -1221,27 +1253,29 @@ void loop() {
         nextState = idle;
         currentState = nextState;
       }
-      else if (dataLogCMD.request.systemSensors) {
+      
+      if (dataLogCMD.request.systemSensors) {
 
         systemSensorString = "";
-        //
-        systemSensorString += String(sensorLogData.globalID);
-        systemSensorString += ",";
-        systemSensorString += String(sensorLogData.stationID);
-        systemSensorString += ",";
+        //There is no global id yet and there is no station ID
+//        systemSensorString += String(sensorLogData.globalID);
+//        systemSensorString += ",";
+//        systemSensorString += String(sensorLogData.stationID);
+//        systemSensorString += ",";
         systemSensorString += String(systemSensorData.internalTemperature);
         systemSensorString += ",";
         systemSensorString += String(systemSensorData.BatteryVoltage);
         systemSensorString += ",";
         systemSensorString += String(systemSensorData.SolarPanVoltage);
         systemSensorString += ",";
-        systemSensorString += String(systemSensorData.Current);
-        systemSensorString += ",";
+        //we dont have current reading implemented yet.
+//        systemSensorString += String(systemSensorData.Current);
+//        systemSensorString += ",";
 
 
         /*debug: print timestamp and log string (not necessary)******************************/
         printRTC('a');
-        Serial.print("Datalog String,");
+        Serial.print("System data: ");
         Serial.println(systemSensorString);
 
         //here is where the magic happens: log system string into the sd card
@@ -1455,11 +1489,14 @@ void datalog_printHeader(void) {
 
   // open the file. note that only one file can be open at a time,
   // so you have to close this one before opening another.
-  dataFile = SD.open("datalog.txt", FILE_WRITE);
+//  dataFile = SD.open("datalog.txt", FILE_WRITE);
 
   // dataFile.println("YY/MM/DD,hh:mm,TEMP(C_deg),RH(%),");
 
-  dataFile.close();
+  //sequence to open the sd card file, write the header, and close the file
+//  dataFile = SD.open("datalog.txt", FILE_WRITE);
+//  dataFile.println(""yyyy/mm/dd,hh:mm,Temp_min,Temp_ave,Temp_max,RH_min,RH_ave,RH_max,Rain_accumulated");
+//  dataFile.close();
   // print to the serial port too:
   //Serial.println(dataString);
 
