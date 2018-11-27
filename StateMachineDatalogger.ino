@@ -226,6 +226,7 @@ struct datalogCMD dataLogCMD;
 // define the names for data conversion in the processing subroutine
 #define metric 0
 #define imperial 1
+#define miliVolt 2
 
 
 /*
@@ -265,6 +266,7 @@ enum state nextState;
 */
 struct sensorLogFields {
   long int globalID;
+  long int sampleNumb_15min;
   char timeStamp[10];
   char stationID[10];
   float temperature;
@@ -346,10 +348,12 @@ enum StateGPS stateGPS = 0;
 char comandoGPR[7] = "GPRMC";
 int i;
 
-
+//nodeID
+char NodeID = 'A';
 
 void setup() {
   _DEBUG = DEBUG_ON;
+  //sensorLogData.NodeID = NodeID;
 
   Serial.begin(9600);
   SDCardInit();
@@ -362,7 +366,7 @@ void setup() {
   // Print header of the 1 minute datalogger file in the sd card
 
     dataFile = SD.open("datalog.txt", FILE_WRITE);
-    dataFile.println("yyyy/mm/dd,hh:mm,Sample_ID,Temp,RH,,Rain_accumulated");
+    dataFile.println("yyyy/mm/dd,hh:mm,Sample_ID,Temp,RH,Rain_accumulated");
     dataFile.close();
 
   // Print header of the 15 minute datalogger file in the sd card
@@ -393,11 +397,14 @@ void setup() {
   dataLogCMD.interval.readGPS = 12;  // in hours. Read GPS at 12PM
 
   sensorLogData.globalID = 0; // reset the global identifier for the sensor data. (have to find a better way to keep the sample id - maybe using the eeprom -
-
+  sensorLogData.sampleNumb_15min = 0;
   dataLogCMD.flag.logging = 1;
 
   // set the units of the datalogger to metric
   dataLogCMD.units = metric;
+  //dataLogCMD.units = miliVolt;
+
+  
 
 
 
@@ -413,6 +420,8 @@ void setup() {
 
   } else if (dataLogCMD.units == metric) {
     datalog("info.txt", "metric");
+  }else if (dataLogCMD.units == miliVolt) {
+    datalog("info.txt", "miliVolt");
   }
 
    //read temp and relative humidity sensors: 
@@ -981,9 +990,7 @@ void loop() {
 
 
       }
-
-
-
+ 
       //read system sensors data
 
 
@@ -1053,6 +1060,15 @@ void loop() {
 
           //rainfall in millimiters
           sensorLogData.rainFall *= 0.25;
+
+        }else if (dataLogCMD.units == miliVolt) {
+
+          //temperature in Celsius
+          sensorLogData.temperature = sensorLogData.temperature;
+          //relative humidity in percentage
+          sensorLogData.relativeHumdity = sensorLogData.relativeHumdity;
+          //rainfall in clicks
+          sensorLogData.rainFall;
 
         }
  
@@ -1166,6 +1182,8 @@ void loop() {
         // make a string for assembling the data to log:
         sensorLog = "";
         //
+        sensorLog += String(NodeID);
+        sensorLog += ",";
         sensorLog += String(sensorLogData.globalID);
         sensorLog += ",";
         sensorLog += String(sensorLogData.temperature);
@@ -1180,7 +1198,9 @@ void loop() {
 
         Serial.println(sensorLog);
         datalog("datalog.txt", sensorLog);
-
+        ///xbeetransmitData(sensorLog);
+         
+         //marker
        // if it is 15 minutes, than transmit
           dataLogCMD.request.sensor = 0;
           nextState = idle;
@@ -1197,6 +1217,8 @@ void loop() {
             //
            //  sensorLog += String(sensorLogData.globalID);
            // sensorLog += ",";
+            sensorLog += String(NodeID);
+            sensorLog += ",";
             sensorLog += String(tempMin);
             sensorLog += ",";
             sensorLog += String(tempAverage);
@@ -1218,7 +1240,19 @@ void loop() {
           Serial.println(sensorLog);
            
           datalog("QuarterH.txt", sensorLog);
-          
+          sensorLogData.sampleNumb_15min++;
+            
+          sensorLog = "";sensorLog += String(NodeID);
+          sensorLog += ",";
+          sensorLog += String(sensorLogData.sampleNumb_15min);
+          sensorLog += ",";
+          sensorLog += String(tempAverage);
+          sensorLog += ",";
+          sensorLog += String(rhAverage);
+          sensorLog += ",";    
+          sensorLog += String(rainAccumulated);
+          sensorLog += ",";   
+          xbeetransmitData(sensorLog);
 
           
           // reset 15 minute rain accumulated global variable
@@ -1321,7 +1355,7 @@ void loop() {
       digitalWrite(state7Led, LOW);  // GPS
 
 
-      xbeetransmitData();
+      //xbeetransmitData();
       delay(500);
 
       nextState = idle;
@@ -1744,14 +1778,19 @@ void Temp_Rel_Sensor_Init() {
 
 }
 
-
-void xbeetransmitData(void) {
+//marker
+void xbeetransmitData(String data) {
   // SH + SL Address of receiving XBee (gateway)
-  XBeeAddress64 addr64 = XBeeAddress64(0x0013a200, 0x406E61AC);
-  char payload[30];
+  XBeeAddress64 addr64 = XBeeAddress64(0x0013a200, 0x40F5F036);
+  char payload[25];
+  data.toCharArray(payload, 25);
+ 
   ZBTxRequest zbTx = ZBTxRequest(addr64, payload, sizeof(payload));
   ZBTxStatusResponse txStatus = ZBTxStatusResponse();
-  sensorLog.toCharArray(payload, 20);
+ // data.toCharArray(payload, 20);
+
+//  Serial.println(zbTx);
+
   xbee.send(zbTx);
 
   // flash TX indicator
@@ -1776,8 +1815,8 @@ void xbeetransmitData(void) {
       }
     }
   } else if (xbee.getResponse().isError()) {
-    //Serial.print("Error reading packet.  Error code: ");
-    //Serial.println(xbee.getResponse().getErrorCode());
+      Serial.print("Error reading packet.  Error code: ");
+      Serial.println(xbee.getResponse().getErrorCode());
   } else {
     // local XBee did not provide a timely TX Status Response -- should not happen
     flashLed(errorLed, 2, 50);
