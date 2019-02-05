@@ -5,7 +5,7 @@
   Pin:
 
    SD card attached to SPI bus as follows :
- ** MOSI - pin 51
+ ** MOSI - pin 5RAI1
  ** MISO - pin 50
  ** CLK  - pin 52
  ** CS   - pin 53
@@ -41,12 +41,13 @@ XBee xbee = XBee();
 XBeeResponse response = XBeeResponse();
 // create reusable response objects for responses we expect to handle
 ZBRxResponse rx = ZBRxResponse();
-XBeeAddress64 remoteAdd64 = XBeeAddress64(0x0013a200, 0x00000000);
+XBeeAddress64 gatewayAddress = XBeeAddress64(0x0013a200, 0x40F5F036);///XBeeAddress64(0x0013a200, 0x40F5F036);
 ModemStatusResponse msr = ModemStatusResponse();
+   char payload[25];
 
-int statusLed = 13;
-int errorLed = 13;
-int dataLed = 13;
+int statusLed = 7;
+int errorLed = 7;
+int dataLed = 7;
 
 /* I am using the am2315 temperature and relative hum. sensor.
   This sensor has a digital interface (I2C).
@@ -181,7 +182,7 @@ int state3Led = 11;
 int state4Led = 10;
 int state5Led = 9;
 int state6Led = 8;
-int state7Led = 7;
+int state7Led = 7; //used as flashLed xbee function
 
 int ledState = 0;
 
@@ -207,6 +208,7 @@ struct requests {
   char systemSensors;
   char externalSensors;
   char quarterHour;
+  char oneMinData;
 };
 
 
@@ -279,6 +281,16 @@ String sensorLog;
 
 
 
+char SW_LWS = 5;
+char SW_SMS = 6;
+char SW_237 = 23;
+char SW_TEMP_RH = 24;
+
+char SW_BTN_1 = 49;
+char SW_BTN_2 = 47;
+
+
+
 /* System sensors log data
   Global id, timeStamp, stationID, internalTemperature (C_deg), BatteryVoltage (V), SolarPanVoltage (V), [current]
 
@@ -323,7 +335,7 @@ char gpsInString[300]; // I still need to check how many bytes the gps radio wil
 String gpsLatLongString; //
 int  gpsCommaPosition[50];
 char t_out_gps = 30;
-int  GPSHwSwitch = 6; // connected to a npn transistor (base pin) (emissor = gnd arduino, coletor = GND radio)
+int  GPSHwSwitch = 4; // connected to a npn transistor (base pin) (emissor = gnd arduino, coletor = GND radio)
 
 char gps_on = 0;
 char latitude[10];
@@ -349,7 +361,7 @@ char comandoGPR[7] = "GPRMC";
 int i;
 
 //nodeID
-char NodeID = 'A';
+char NodeID = 'E';
 
 void setup() {
   _DEBUG = DEBUG_ON;
@@ -363,17 +375,22 @@ void setup() {
   SD_createFile("status.txt");
   SD_createFile("gps.txt");
 
+  //turn rotronics sensor on 
+  pinMode(SW_TEMP_RH, OUTPUT);
+  digitalWrite(SW_TEMP_RH, HIGH);  
+  delay(2000);
+
   // Print header of the 1 minute datalogger file in the sd card
 
-    dataFile = SD.open("datalog.txt", FILE_WRITE);
-    dataFile.println("yyyy/mm/dd,hh:mm,Sample_ID,Temp,RH,Rain_accumulated");
-    dataFile.close();
+  //  dataFile = SD.open("datalog.txt", FILE_WRITE);
+    //dataFile.println("yyyy/mm/dd,hh:mm,Sample_ID,Temp,RH,Rain_accumulated");
+   // dataFile.close();
 
   // Print header of the 15 minute datalogger file in the sd card
   
-    dataFile = SD.open("quarterH.txt", FILE_WRITE);
-    dataFile.println("yyyy/mm/dd,hh:mm,Temp_min,Temp_ave,Temp_max,RH_min,RH_ave,RH_max,Rain_accumulated");
-    dataFile.close();
+   // dataFile = SD.open("quarterH.txt", FILE_WRITE);
+    //dataFile.println("yyyy/mm/dd,hh:mm,Temp_min,Temp_ave,Temp_max,RH_min,RH_ave,RH_max,Rain_accumulated");
+   // dataFile.close();
   
   //
   RTCInit();
@@ -396,6 +413,8 @@ void setup() {
   dataLogCMD.interval.checkSystem = 10;
   dataLogCMD.interval.readGPS = 12;  // in hours. Read GPS at 12PM
 
+  dataLogCMD.request.oneMinData = 1;
+
   sensorLogData.globalID = 0; // reset the global identifier for the sensor data. (have to find a better way to keep the sample id - maybe using the eeprom -
   sensorLogData.sampleNumb_15min = 0;
   dataLogCMD.flag.logging = 1;
@@ -404,10 +423,7 @@ void setup() {
   dataLogCMD.units = metric;
   //dataLogCMD.units = miliVolt;
 
-  
-
-
-
+   
 
   pinMode(rainGaugeInterruptPin, INPUT);
   attachInterrupt(digitalPinToInterrupt(rainGaugeInterruptPin), rainISR, RISING);
@@ -425,10 +441,17 @@ void setup() {
   }
 
    //read temp and relative humidity sensors: 
+  
    
    sensorLogData.temperature  = analogRead(3);
    sensorLogData.relativeHumdity = analogRead(4);
-    
+//       Serial.println("mv analog 3");
+//
+//    Serial.println(((int)analogRead(3))*5.0/1023.0);
+//       Serial.println("mv analog 4");
+//    
+//    Serial.println(((int)analogRead(4))*5.0/1023.0);
+
     // check if the units are in imperial or in metric system
     if (dataLogCMD.units == imperial) {
       //temperature in Faherent
@@ -612,7 +635,7 @@ void loop() {
                  //
               dataLogCMD.request.quarterHour = 1;
             }
-            if (currentMin % 5 == 0) {
+            if (currentMin % 30 == 0) {
                  // Serial.println(dataLogCMD.request.quarterHour);
 
               dataLogCMD.request.systemSensors = 1;
@@ -635,27 +658,27 @@ void loop() {
 
 
         // we have to check for a "new" hour, this avoids over reading
-        if (previousHour != currentHour) {
+//        if (previousHour != currentHour) {
           // yes, it is a new hour.
 
           // Global variable previous Hour is updated with the value of current minute.
-          previousHour = currentHour;
+//          previousHour = currentHour;
 
           // now, it is time to check if it is time to read the GPS coordinate.
           // this is done just once a day.
-          if (currentHour % dataLogCMD.interval.readGPS) {
+          //if (currentHour % dataLogCMD.interval.readGPS) {
             // set the global flag/request
-            dataLogCMD.request.gps = 1;
+            //dataLogCMD.request.gps = 1;
 
             // upgrade the state
-            nextState = gpsReading;
-            currentState = nextState;
-          }
-          if (currentHour % dataLogCMD.interval.midnightReset) {
-            // set the global flag/request
-
-          }
-        }
+            //nextState = gpsReading;
+            //currentState = nextState;
+          //}
+//          if (currentHour % dataLogCMD.interval.midnightReset) {
+//            // set the global flag/request
+//
+//          }
+//        }
 
       }
 
@@ -706,15 +729,16 @@ void loop() {
             Serial.println((dataLogCMD.flag.logging) ? ("Datalogger On") : ("Datalogger Standby"));
 
             break;
-          case 'e': // pause/stop data logging
+          case 'g': // pause/stop data logging
             // Change the flow of the program to gps read.
             nextState = gpsReading;
             currentState = nextState;
             break;
           case 'f': //  system status (battery and solar panel voltage).
             // Set the global global variable to reads battery, solar panel voltage, and internal temperature.
-            // nextState = gpsReading;
-            // currentState = nextState;
+            dataLogCMD.request.systemSensors = 1;
+            nextState = sampling;
+            currentState = nextState;
             break;
 
           case 'u': // display units and offer the option to change units
@@ -751,7 +775,7 @@ void loop() {
             Serial.println("\t b -> Status of the Datalogger");
             Serial.println("\t c -> Start Logging Data - Green Led Blinking");
             Serial.println("\t d -> Stop Logging Data - Green Led Solid");
-            Serial.println("\t e -> Read GPS RADIO");
+            Serial.println("\t g -> Read GPS RADIO");
             Serial.println("\t f -> System status");
             Serial.println("\t u -> Change logging unit system: ");
             Serial.println("\t\t to change logging unit, please type the combination: ");
@@ -773,10 +797,10 @@ void loop() {
         //If the xbee message is a zigbee receiving response type,
         // then Get response (full message).
         // Print time stamp
-        printRTC('a'); // prints hh:mm:ss
+        //printRTC('a'); // prints hh:mm:ss
 
         //Print “receiving data xbee” message
-        Serial.println("Receiving");
+        //Serial.println("Receiving");
 
         //Set the visual led indicator to Xbee receiving data.
         digitalWrite(state1Led, LOW);  // turn the LED on (HIGH is the voltage level)
@@ -807,8 +831,8 @@ void loop() {
             If the gateway is transmitting data, then:
 
           */
-          if (rx.getRemoteAddress64().getLsb() == 0x406e61ac) {
-            Serial.println("Data Received from Gateway: ");
+          //if (rx.getRemoteAddress64().getLsb() == 0x40f5f036) {
+            //Serial.println("Data Received from Gateway: ");
             /*
               this block of code helps with gettting the data from the xbee mesasge
               the data needs to be get using a char variable, and then converted
@@ -831,101 +855,114 @@ void loop() {
               //If the first byte is ‘#’, then (means there is a menu type message
               case '#': //Remote Control
                 //Reads the second byte of the message.
-                dataRx = rx.getData(1);
+                //dataRx = rx.getData(1);
                 // The second byte follows the same structure of the menu
                 //presented before in the serial communication.
                 // If the second byte is:
                 switch (rx.getData(1)) {
                   case 'a': //sample once
                     // Change the flow of the program and goes to sample.
-                    nextState = sampling;
-                    currentState = nextState;
+
+                     
+                        sensorLog = "";
+                        sensorLog += String(NodeID);
+                        sensorLog += ",";
+                        sensorLog += String(sensorLogData.sampleNumb_15min);
+                        sensorLog += ",";
+                        sensorLog += String(tempAverage);
+                        sensorLog += ",";
+                        sensorLog += String(rhAverage);
+                        sensorLog += ",";    
+                        sensorLog += String(rainAccumulated);
+                        sensorLog += ",";   
+                        xbeetransmitData(sensorLog);
+                        Serial.println(sensorLog);
+ 
                     break;
 
                   case 'b': //  print the status of the data logger (logging interval)
-                    Serial.println("logging status: ");
-                    Serial.print("\t loggingInterval: ");
-                    // Read and print the global variable data logger logging interval.
-                    Serial.print (dataLogCMD.interval.logging);
-
-                    // Read and print the global variable data logger flag logging.
-                    // If the flag is set, print “data logger on”.
-                    // If the flag is off, print “data logger is off”.
-                    Serial.print("'\t' logging status: ");
-                    Serial.println((dataLogCMD.flag.logging) ? ("Datalogger On") : ("Datalogger Standby"));
-
-                    Serial.print("'\t' logging units: ");
-                    Serial.println((dataLogCMD.units) ? ("Metric") : ("Imperial"));
+                        systemSensorData.internalTemperature = analogRead(0);
+                        
+                        // convert the value to resistance
+                        systemSensorData.internalTemperature = 1023 / systemSensorData.internalTemperature - 1;
+                        systemSensorData.internalTemperature = 10000.0 / systemSensorData.internalTemperature;
+                        
+                        float steinhart;
+                        steinhart = systemSensorData.internalTemperature / 10000;     // (R/Ro)
+                        steinhart = log(steinhart);                  // ln(R/Ro)
+                        steinhart /= 3950;                   // 1/B * ln(R/Ro)
+                        steinhart += 1.0 / (25 + 273.15); // + (1/To)
+                        steinhart = 1.0 / steinhart;                 // Invert
+                        steinhart -= 273.15;                         // convert to C
+                
+                        systemSensorData.internalTemperature = steinhart;
+                       
+                        
+                         systemSensorData.SolarPanVoltage = analogRead(1)*(5.0 / 1024.0)*10.28;
+                        systemSensorData.BatteryVoltage = analogRead(2)*(5.0 / 1024.0)*11.05;
+                        systemSensorString = "";
+      
+                        //There is no global id yet and there is no station ID
+                        systemSensorString += String(NodeID);
+                        systemSensorString += ",";
+                        systemSensorString += String("!");
+                        systemSensorString += ",";
+                        systemSensorString += String(systemSensorData.internalTemperature);
+                        systemSensorString += ",";
+                        systemSensorString += String(systemSensorData.BatteryVoltage);
+                        systemSensorString += ",";
+                        systemSensorString += String(systemSensorData.SolarPanVoltage);
+                        systemSensorString += ",";
+ 
+                        xbeetransmitData(systemSensorString);//marker
+                        Serial.println(systemSensorString);
 
 
                     //digitalWrite(3, HIGH);
                     break;
 
-                  case 'c': // turn on datalogger
-                    // Set the global global variable data logger flag logging.
-                    dataLogCMD.flag.logging = 1;
-                    Serial.println((dataLogCMD.flag.logging) ? ("Datalogger On") : ("Datalogger Standby"));
-
-                    break;
-                  case 'd': // pause/stop data logging
-                    //Reset the global global variable data logger flag logging.
-                    dataLogCMD.flag.logging = 0;
-                    Serial.println((dataLogCMD.flag.logging) ? ("Datalogger On") : ("Datalogger Standby"));
+                  case 'c': 
+                        GPS_read();
  
                     break;
-                  case 'e': // pause/stop data logging
-                    // Change the flow of the program to gps read.
-                    nextState = gpsReading;
-                    currentState = nextState;
-                    break;
-                  case 'f': //  system status (battery and solar panel voltage).
-                    // Set the global global variable to reads battery, solar panel voltage, and internal temperature.
-                    // nextState = gpsReading;
-                    // currentState = nextState;
-                    break;
+                  case 'd': {
+                        DateTime now = rtc.now();
+                        systemSensorString = "";
+                        
+                        //There is no global id yet and there is no station ID
+                        systemSensorString += String(NodeID);
+                        systemSensorString += ",";
+                        systemSensorString += String("&");
+                        systemSensorString += ",";
+                        systemSensorString += String(now.year());
+                        systemSensorString += ",";
+                        systemSensorString += String(now.month());
+                        systemSensorString += ","; 
+                        systemSensorString += String(now.day());
+                        systemSensorString += ",";
+                        systemSensorString += String(now.hour());
+                        systemSensorString += ",";
+                        systemSensorString += String(now.minute());
+                        systemSensorString += ",";  
+                        systemSensorString += String(now.second());
+                        systemSensorString += ",";
 
+                        Serial.println(systemSensorString);
 
-                  case 'h':  //help
-                    //Prints in the terminal serial all the possible options available in the menu.
-
-                    Serial.println("press: ");
-                    Serial.println("\t a -> Sample once (testing)");
-                    Serial.println("\t b -> Status of the Datalogger");
-                    Serial.println("\t c -> Start Logging Data - Green Led Blinking");
-                    Serial.println("\t d -> Stop Logging Data - Green Led Solid");
-                    Serial.println("\t e -> Read GPS RADIO");
-                    Serial.println("\t f -> System status");
-                    Serial.println("\t u -> Logging units (metric/imperial)");
-                    Serial.println("\t h -> Help");
-                    break;
-                  default: //If the byte is not a #, for now store the message in a string and prints it in the terminal serial for the user.
-
-                    // char dataRx;
-                    String strDataRx;
-                    dataRx = rx.getData(0);
-                    strDataRx += dataRx;
-
-                    Serial.print(dataRx);
-                    dataRx = rx.getData(1);
-                    strDataRx += dataRx;
-                    Serial.print(dataRx);
-                    dataRx = rx.getData(2);
-                    strDataRx += dataRx;
-                    Serial.print(dataRx);
-                    dataRx = rx.getData(3);
-                    strDataRx += dataRx;
-                    Serial.print(dataRx);
-                    dataRx = rx.getData(4);
-                    strDataRx += dataRx;
-                    Serial.print(dataRx);
-                    Serial.print(",");
-                    Serial.println(strDataRx);
-                    Serial.println("");
-
-                    Serial.println("here");
-                    nextState = idle;
-                    currentState = nextState;
-                    break;
+                        xbeetransmitData(systemSensorString);//marker
+                  }
+                    break;  
+                    case 'j': //feio
+                          dataLogCMD.request.oneMinData = 1;
+  
+                    break;                   
+                    case 'k': 
+                          dataLogCMD.request.oneMinData = 0;
+  
+                    break;                
+                    
+                 
+                   
                 }// end switch menu
               default: //If the byte is not a #, for now store the message in a string and prints it in the terminal serial for the user.
                 //Serial.println("here");
@@ -934,11 +971,12 @@ void loop() {
                 break;
             }//end switch first byte
 
-          }//end if that check at the sender address
-        } else {
-          // end if that check if the message is valid
-          //Serial.println("y");
-        }
+          //}//end if that check at the sender address
+        } 
+//        else {
+//          // end if that check if the message is valid
+//          //Serial.println("y");
+//        }
       }//end if that check if there is a new character on the xbee serial port
 
       break;// end switch case receiving data from xbee radio
@@ -978,7 +1016,9 @@ void loop() {
         sensorLogData.globalID++;
 
         // read data from global variable rain clicks in the interrupt service routine (ISR)
-        sensorLogData.rainFall = rainClicks;
+        sensorLogData.rainFall = rainClicks/2;
+        //jan 23 2019 dont know why but it is reading doubled clicks that is the why I am diving by 2 
+        
         // reset rain clicks, which is the global variable in the ISR.
         rainClicks = 0;
 
@@ -1002,8 +1042,8 @@ void loop() {
         // stationID[10];
 
         systemSensorData.internalTemperature = analogRead(0);
-        systemSensorData.BatteryVoltage = analogRead(1);
-        systemSensorData.SolarPanVoltage = analogRead(2);
+        systemSensorData.SolarPanVoltage = analogRead(1)*(5.0 / 1024.0)*10.28;
+        systemSensorData.BatteryVoltage = analogRead(2)*(5.0 / 1024.0)*11.05;
 
         systemSensorData.Current = 0; // not implemented in hardware yet. (may 23,2018)
 
@@ -1059,7 +1099,11 @@ void loop() {
           }
 
           //rainfall in millimiters
-          sensorLogData.rainFall *= 0.25;
+          //sensorLogData.rainFall *= 0.25;
+          //jan 23,2019 changed to only clicks until further calibration...
+          sensorLogData.rainFall; 
+          
+          
 
         }else if (dataLogCMD.units == miliVolt) {
 
@@ -1121,12 +1165,13 @@ void loop() {
         // stationID[10];
 
         
-
-        systemSensorData.BatteryVoltage *= (5.0 / 1024.0);
-
-        systemSensorData.SolarPanVoltage *= (5.0 / 1024.0);
-
-        systemSensorData.Current = 0; // not implemented in hardware yet. (may 23,2018)
+        //11 is the ratio of the voltage resistor divisor (1M + 100k) in each analog port would be 11
+        // with the multimeter I measured the input voltage and the voltage at R2 (100K) .
+//        systemSensorData.BatteryVoltage *= (5.0 / 1024.0);
+//
+//        systemSensorData.SolarPanVoltage *= (5.0 / 1024.0);
+//
+//        systemSensorData.Current = 0; // not implemented in hardware yet. (may 23,2018)
 
  
 
@@ -1198,7 +1243,13 @@ void loop() {
 
         Serial.println(sensorLog);
         datalog("datalog.txt", sensorLog);
-        ///xbeetransmitData(sensorLog);
+        //comment here to avoid 1 min data tx
+      
+        if(dataLogCMD.request.oneMinData){
+
+           xbeetransmitData(sensorLog);
+
+        }
          
          //marker
        // if it is 15 minutes, than transmit
@@ -1242,7 +1293,8 @@ void loop() {
           datalog("QuarterH.txt", sensorLog);
           sensorLogData.sampleNumb_15min++;
             
-          sensorLog = "";sensorLog += String(NodeID);
+          sensorLog = "";
+          sensorLog += String(NodeID);
           sensorLog += ",";
           sensorLog += String(sensorLogData.sampleNumb_15min);
           sensorLog += ",";
@@ -1283,6 +1335,16 @@ void loop() {
         printRTC('a');
         Serial.println(gpsLatLongString);
         datalog("gps.txt", gpsLatLongString);
+
+        //There is no global id yet and there is no station ID
+        systemSensorString += String(NodeID);
+        systemSensorString += ",";
+        systemSensorString += String("$");
+        systemSensorString += ",";
+        systemSensorString += String(gpsLatLongString);
+        systemSensorString += ",";
+        
+        xbeetransmitData(systemSensorString);//marker
         dataLogCMD.request.gps = 0;
         nextState = idle;
         currentState = nextState;
@@ -1291,11 +1353,12 @@ void loop() {
       if (dataLogCMD.request.systemSensors) {
 
         systemSensorString = "";
+
         //There is no global id yet and there is no station ID
-//        systemSensorString += String(sensorLogData.globalID);
-//        systemSensorString += ",";
-//        systemSensorString += String(sensorLogData.stationID);
-//        systemSensorString += ",";
+        systemSensorString += String(NodeID);
+        systemSensorString += ",";
+        systemSensorString += String("!");
+        systemSensorString += ",";
         systemSensorString += String(systemSensorData.internalTemperature);
         systemSensorString += ",";
         systemSensorString += String(systemSensorData.BatteryVoltage);
@@ -1306,7 +1369,7 @@ void loop() {
 //        systemSensorString += String(systemSensorData.Current);
 //        systemSensorString += ",";
 
-
+        xbeetransmitData(systemSensorString);//marker
         /*debug: print timestamp and log string (not necessary)******************************/
         printRTC('a');
         Serial.print("System data: ");
@@ -1781,37 +1844,37 @@ void Temp_Rel_Sensor_Init() {
 //marker
 void xbeetransmitData(String data) {
   // SH + SL Address of receiving XBee (gateway)
-  XBeeAddress64 addr64 = XBeeAddress64(0x0013a200, 0x40F5F036);
-  char payload[25];
+ // XBeeAddress64 addr64 = XBeeAddress64(0x0013a200, 0x40F5F036);
   data.toCharArray(payload, 25);
- 
-  ZBTxRequest zbTx = ZBTxRequest(addr64, payload, sizeof(payload));
+  ZBTxRequest zbTx = ZBTxRequest(gatewayAddress, payload, sizeof(payload));
   ZBTxStatusResponse txStatus = ZBTxStatusResponse();
  // data.toCharArray(payload, 20);
 
-//  Serial.println(zbTx);
+  //Serial1.println(data);
 
   xbee.send(zbTx);
 
   // flash TX indicator
-  flashLed(statusLed, 1, 100);
+  // flashLed(statusLed, 5, 100);
 
   // after sending a tx request, we expect a status response
   // wait up to half second for the status response
   if (xbee.readPacket(500)) {
     // got a response!
-
+     flashLed(statusLed, 1, 100);
+     Serial.println(txStatus.getDeliveryStatus());
     // should be a znet tx status
     if (xbee.getResponse().getApiId() == ZB_TX_STATUS_RESPONSE) {
       xbee.getResponse().getZBTxStatusResponse(txStatus);
-
+      
+      
       // get the delivery status, the fifth byte
       if (txStatus.getDeliveryStatus() == SUCCESS) {
         // success.  time to celebrate
-        flashLed(statusLed, 5, 50);
+        //flashLed(statusLed, 5, 50);
       } else {
         // the remote XBee did not receive our packet. is it powered on?
-        flashLed(errorLed, 3, 500);
+        //flashLed(errorLed, 3, 500);
       }
     }
   } else if (xbee.getResponse().isError()) {
@@ -1819,7 +1882,7 @@ void xbeetransmitData(String data) {
       Serial.println(xbee.getResponse().getErrorCode());
   } else {
     // local XBee did not provide a timely TX Status Response -- should not happen
-    flashLed(errorLed, 2, 50);
+    //flashLed(errorLed, 2, 50);
   }
 }
 
