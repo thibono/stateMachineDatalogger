@@ -39,9 +39,13 @@ XBee xbee = XBee();
 //
 
 XBeeResponse response = XBeeResponse();
-// create reusable response objects for responses we expect to handle
+// create reusable response ob`ects for responses we expect to handle
 ZBRxResponse rx = ZBRxResponse();
-XBeeAddress64 gatewayAddress = XBeeAddress64(0x0013a200, 0x40F5F036);///XBeeAddress64(0x0013a200, 0x40F5F036);
+
+//original gateway  XBeeAddress64(0x0013a200, 0x40F5F036)
+XBeeAddress64 gatewayAddress = XBeeAddress64(0x0013a200, 0x418aa1d2);///XBeeAddress64(0x0013a200, 0x40F5F036);
+//XBeeAddress64 gatewayAddress = XBeeAddress64(0x00000000, 0x0000FFFF);///XBeeAddress64(0x0013a200, 0x40F5F036);
+
 ModemStatusResponse msr = ModemStatusResponse();
    char payload[25];
 
@@ -297,8 +301,8 @@ char SW_BTN_2 = 47;
   example:
   5,5/23/2018, 13:34, 50,5,14,
 
-
 */
+
 struct systemSensorLogFields {
   long int globalID;
   char timeStamp[10];
@@ -361,7 +365,7 @@ char comandoGPR[7] = "GPRMC";
 int i;
 
 //nodeID
-char NodeID = 'E';
+char NodeID = 'B';
 
 void setup() {
   _DEBUG = DEBUG_ON;
@@ -413,6 +417,7 @@ void setup() {
   dataLogCMD.interval.checkSystem = 10;
   dataLogCMD.interval.readGPS = 12;  // in hours. Read GPS at 12PM
 
+  // transmit every min
   dataLogCMD.request.oneMinData = 1;
 
   sensorLogData.globalID = 0; // reset the global identifier for the sensor data. (have to find a better way to keep the sample id - maybe using the eeprom -
@@ -421,7 +426,8 @@ void setup() {
 
   // set the units of the datalogger to metric
   dataLogCMD.units = metric;
-  //dataLogCMD.units = miliVolt;
+  //dataLogCMD.units = miliVolt;  if (dataLogCMD.units == imperial) {
+
 
    
 
@@ -431,6 +437,7 @@ void setup() {
 
 
   // before going to main loop, it should store in the info file if the station is storing data in metric or imperial system
+   
   if (dataLogCMD.units == imperial) {
     datalog("info.txt", "imperial");
 
@@ -860,12 +867,14 @@ void loop() {
                 //presented before in the serial communication.
                 // If the second byte is:
                 switch (rx.getData(1)) {
-                  case 'a': //sample once
+                  case 'a': //sample once and transmit uppon request
                     // Change the flow of the program and goes to sample.
 
-                     
+                        //aqui
                         sensorLog = "";
                         sensorLog += String(NodeID);
+                        sensorLog += ",";
+                        sensorLog += String("$");
                         sensorLog += ",";
                         sensorLog += String(sensorLogData.sampleNumb_15min);
                         sensorLog += ",";
@@ -952,7 +961,7 @@ void loop() {
                         xbeetransmitData(systemSensorString);//marker
                   }
                     break;  
-                    case 'j': //feio
+                    case 'j': //marker
                           dataLogCMD.request.oneMinData = 1;
   
                     break;                   
@@ -1226,8 +1235,10 @@ void loop() {
       if (dataLogCMD.request.sensor) {
         // make a string for assembling the data to log:
         sensorLog = "";
-        //
+        //message buffer - 
         sensorLog += String(NodeID);
+        sensorLog += ",";
+        sensorLog += String("$");
         sensorLog += ",";
         sensorLog += String(sensorLogData.globalID);
         sensorLog += ",";
@@ -1296,6 +1307,8 @@ void loop() {
           sensorLog = "";
           sensorLog += String(NodeID);
           sensorLog += ",";
+          sensorLog += String("*");
+          sensorLog += ",";
           sensorLog += String(sensorLogData.sampleNumb_15min);
           sensorLog += ",";
           sensorLog += String(tempAverage);
@@ -1304,9 +1317,10 @@ void loop() {
           sensorLog += ",";    
           sensorLog += String(rainAccumulated);
           sensorLog += ",";   
+
+          //xbee transmit wireless data
           xbeetransmitData(sensorLog);
 
-          
           // reset 15 minute rain accumulated global variable
           rainAccumulated = 0;
 
@@ -2156,4 +2170,3 @@ void GPS_read(void) {
   GPS_PowerOFF();
 
 }
-
